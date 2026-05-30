@@ -12,7 +12,7 @@ from tha_aws_runner.errors import AwsError
 from tha_aws_runner.s3 import ThaS3
 from tha_aws_runner.ssm import ThaSSM
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "AWSBase",
     "AWSClients",

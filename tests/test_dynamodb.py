@@ -31,8 +31,8 @@ def test_fetch_by_pk_happy(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     result = ddb.fetch_by_pk("my_table", ["pk1", "pk2"], key_name="id", key_type="S")
 
-    assert result["pk1"] == {"name": "Alice"}
-    assert result["pk2"] == {"not_found": True}
+    assert result["my_table"]["pk1"] == {"name": "Alice"}
+    assert result["my_table"]["pk2"] == {"not_found": True}
     assert ddb.rows is result
 
 
@@ -49,7 +49,7 @@ def test_fetch_by_pk_with_fields(mock_ddb_client):
     result = ddb.fetch_by_pk(
         "my_table", ["pk1"], key_name="id", key_type="S", fields={"name": "S"}
     )
-    assert result["pk1"] == {"name": "Alice"}
+    assert result["my_table"]["pk1"] == {"name": "Alice"}
 
 
 def test_fetch_by_pk_raises_on_client_error(mock_ddb_client):

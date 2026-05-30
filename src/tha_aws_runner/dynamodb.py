@@ -35,7 +35,7 @@ class ThaDdb(AWSBase):
         key_name: str | None = None,
         key_type: str | None = None,
         dynamodb: Any = None,
-    ) -> dict[str, dict]:
+    ) -> dict[str, dict[str, dict]]:
         dynamodb = self._client(dynamodb)
 
         def extract_any(attr: dict) -> Any:
@@ -112,8 +112,9 @@ class ThaDdb(AWSBase):
         if unprocessed:
             raise RuntimeError(f"Unprocessed keys remain after {retries} retries: {unprocessed}")
 
-        self.rows = records_dict
-        return records_dict
+        result = {table_name: records_dict}
+        self.rows = result
+        return result
 
     def update_by_pk(
         self,
