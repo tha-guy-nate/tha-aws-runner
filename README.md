@@ -51,10 +51,12 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 
 | Method | Description |
 |--------|-------------|
-| `fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Batch-fetch items by partition key. Returns `dict[pk → record]`. Missing keys get `{"not_found": True}`. |
+| `fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Batch-fetch items by partition key. Returns `{table_name: {pk: record}}` — a Python dict nested by table name then pk. Missing keys get `{"not_found": True}`. |
 | `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, or `error`. |
 | `batch_put(table_name, items, key_name, *, dynamodb=None)` | Write up to N items in 25-item chunks with retry. Returns `{"written": N}`. |
 | `delete_by_pk(table_name, partition_key, key_name, key_type, *, dynamodb=None)` | Delete one item with existence check. Returns `{"pk", "status"}`. |
+
+> GSI (Global Secondary Index) support for `ThaDdb` is planned for a future version.
 
 ### `ThaS3`
 
