@@ -65,7 +65,7 @@ def test_fetch_by_pk_raises_on_client_error(mock_ddb_client):
 def test_update_by_pk_happy(mock_ddb_client):
     mock_ddb_client.update_item.return_value = {"Attributes": {"id": {"S": "pk1"}}}
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active")
+    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
     assert result["status"] == "updated"
     assert ddb.rows is result
 
@@ -73,7 +73,9 @@ def test_update_by_pk_happy(mock_ddb_client):
 def test_update_by_pk_skipped_on_conditional_check(mock_ddb_client):
     mock_ddb_client.update_item.side_effect = _client_error("ConditionalCheckFailedException")
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active")
+    result = ddb.update_by_pk(
+        "my_table", "pk1", "id", "S", "status", "S", "active", commit=True
+    )
     assert result["status"] == "skipped"
 
 
@@ -84,7 +86,7 @@ def test_update_by_pk_to_ddb_attr_bool():
     mock_client = MagicMock()
     mock_client.update_item.return_value = {"Attributes": {}}
     ddb._dynamodb = mock_client
-    result = ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", True)
+    result = ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", True, commit=True)
     assert result["status"] == "updated"
 
 
@@ -96,23 +98,79 @@ def test_update_by_pk_to_ddb_attr_invalid_bool():
         ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", "maybe")
 
 
-# --- batch_put ---
+def test_update_by_pk_dry_run(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active")
+    assert result == {"pk": "pk1", "status": "dry_run"}
+    mock_ddb_client.update_item.assert_not_called()
+    assert ddb.rows is result
 
 
-def test_batch_put_happy(mock_ddb_client):
+def test_update_by_pk_dry_run_still_validates_type(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    with pytest.raises(ValueError, match="BOOL only allows"):
+        ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", "maybe")
+
+
+# --- batch_update_by_pk ---
+
+
+def test_batch_update_by_pk_dry_run(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"user_id": "pk1", "status_col": "active"},
+        {"user_id": "pk2", "status_col": "inactive"},
+    ]
+    result = ddb.batch_update_by_pk(
+        "my_table", rows, "user_id", "id", "S", "status", "S", "status_col"
+    )
+    assert result == [{"pk": "pk1", "status": "dry_run"}, {"pk": "pk2", "status": "dry_run"}]
+    mock_ddb_client.update_item.assert_not_called()
+    assert ddb.rows is result
+
+
+def test_batch_update_by_pk_commit(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {"Attributes": {"id": {"S": "pk1"}}}
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"user_id": "pk1", "status_col": "active"},
+        {"user_id": "pk2", "status_col": "inactive"},
+    ]
+    result = ddb.batch_update_by_pk(
+        "my_table", rows, "user_id", "id", "S", "status", "S", "status_col", commit=True
+    )
+    assert len(result) == 2
+    assert result[0]["status"] == "updated"
+    assert result[1]["status"] == "updated"
+    assert ddb.rows is result
+
+
+# --- batch_write ---
+
+
+def test_batch_write_dry_run(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    items = [{"id": {"S": f"pk{i}"}} for i in range(5)]
+    result = ddb.batch_write("my_table", items, key_name="id")
+    assert result == {"written": 5, "status": "dry_run"}
+    mock_ddb_client.batch_write_item.assert_not_called()
+    assert ddb.rows is result
+
+
+def test_batch_write_happy(mock_ddb_client):
     mock_ddb_client.batch_write_item.return_value = {"UnprocessedItems": {}}
     ddb = make_ddb(mock_ddb_client)
     items = [{"id": {"S": f"pk{i}"}} for i in range(3)]
-    result = ddb.batch_put("my_table", items, key_name="id")
+    result = ddb.batch_write("my_table", items, key_name="id", commit=True)
     assert result["written"] == 3
     assert ddb.rows is result
 
 
-def test_batch_put_chunks_at_25(mock_ddb_client):
+def test_batch_write_chunks_at_25(mock_ddb_client):
     mock_ddb_client.batch_write_item.return_value = {"UnprocessedItems": {}}
     ddb = make_ddb(mock_ddb_client)
     items = [{"id": {"S": f"pk{i}"}} for i in range(30)]
-    result = ddb.batch_put("my_table", items, key_name="id")
+    result = ddb.batch_write("my_table", items, key_name="id", commit=True)
     assert result["written"] == 30
     assert mock_ddb_client.batch_write_item.call_count == 2
 
@@ -120,10 +178,18 @@ def test_batch_put_chunks_at_25(mock_ddb_client):
 # --- delete_by_pk ---
 
 
+def test_delete_by_pk_dry_run(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.delete_by_pk("my_table", "pk1", "id", "S")
+    assert result == {"pk": "pk1", "status": "dry_run"}
+    mock_ddb_client.delete_item.assert_not_called()
+    assert ddb.rows is result
+
+
 def test_delete_by_pk_happy(mock_ddb_client):
     mock_ddb_client.delete_item.return_value = {}
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.delete_by_pk("my_table", "pk1", "id", "S")
+    result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
     assert result["status"] == "deleted"
     assert ddb.rows is result
 
@@ -131,6 +197,6 @@ def test_delete_by_pk_happy(mock_ddb_client):
 def test_delete_by_pk_skipped_when_not_exists(mock_ddb_client):
     mock_ddb_client.delete_item.side_effect = _client_error("ConditionalCheckFailedException")
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.delete_by_pk("my_table", "pk1", "id", "S")
+    result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
     assert result["status"] == "skipped"
     assert result["message"] == "Item does not exist"

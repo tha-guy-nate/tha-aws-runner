@@ -51,6 +51,7 @@ class ThaS3(AWSBase):
         local_path: str | None = None,
         data: str | bytes | None = None,
         encoding: str = "utf-8",
+        commit: bool = False,
         s3: Any = None,
     ) -> dict:
         if uri is not None:
@@ -68,6 +69,11 @@ class ThaS3(AWSBase):
             body = data
         else:
             raise ValueError("Either local_path or data must be provided")
+
+        if not commit:
+            result = {"bucket": bucket, "key": key, "status": "dry_run", "bytes": len(body)}
+            self.rows = result
+            return result
 
         s3_client = self._client(s3)
 

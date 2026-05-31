@@ -127,6 +127,7 @@ class ThaDdb(AWSBase):
         update_value: Any,
         *,
         increment_attr: str | None = None,
+        commit: bool = False,
         dynamodb: Any = None,
     ) -> dict:
         dynamodb = self._client(dynamodb)
@@ -180,6 +181,11 @@ class ThaDdb(AWSBase):
 
         ddb_update_value = to_ddb_attr(update_value)
 
+        if not commit:
+            result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
+            self.rows = result
+            return result
+
         expr_attr_names: dict[str, str] = {"#U": update_attr}
         if increment_attr:
             expr_attr_names["#INC"] = increment_attr
@@ -196,7 +202,6 @@ class ThaDdb(AWSBase):
             eavs[":one"] = {"N": "1"}
 
         key = {key_name: {key_type: partition_key}}
-        result: dict
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -251,15 +256,56 @@ class ThaDdb(AWSBase):
         self.rows = result
         return result
 
-    def batch_put(
+    def batch_update_by_pk(
+        self,
+        table_name: str,
+        rows: list[dict],
+        pk_col: str,
+        key_name: str,
+        key_type: str,
+        update_attr: str,
+        update_type: str,
+        value_col: str,
+        *,
+        increment_attr: str | None = None,
+        commit: bool = False,
+        dynamodb: Any = None,
+    ) -> list[dict]:
+        results = []
+        for row in rows:
+            pk = str(row.get(pk_col) or "")
+            val = row.get(value_col)
+            result = self.update_by_pk(
+                table_name,
+                pk,
+                key_name,
+                key_type,
+                update_attr,
+                update_type,
+                val,
+                increment_attr=increment_attr,
+                commit=commit,
+                dynamodb=dynamodb,
+            )
+            results.append(result)
+        self.rows = results
+        return results
+
+    def batch_write(
         self,
         table_name: str,
         items: list[dict],
         key_name: str,
         *,
+        commit: bool = False,
         dynamodb: Any = None,
     ) -> dict:
         dynamodb = self._client(dynamodb)
+
+        if not commit:
+            result = {"written": len(items), "status": "dry_run"}
+            self.rows = result
+            return result
 
         MAX_RETRIES = 2
         put_requests = [{"PutRequest": {"Item": item}} for item in items]
@@ -275,7 +321,7 @@ class ThaDdb(AWSBase):
             chunks = [batch[i : i + 25] for i in range(0, len(batch), 25)]
             unprocessed = {}
 
-            for chunk in self._progress_iter(chunks, total=len(chunks), desc="batch_put"):
+            for chunk in self._progress_iter(chunks, total=len(chunks), desc="batch_write"):
                 try:
                     response = dynamodb.batch_write_item(RequestItems={table_name: chunk})
                 except ClientError as e:
@@ -306,14 +352,19 @@ class ThaDdb(AWSBase):
         key_name: str,
         key_type: str,
         *,
+        commit: bool = False,
         dynamodb: Any = None,
     ) -> dict:
         dynamodb = self._client(dynamodb)
 
+        if not commit:
+            result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
+            self.rows = result
+            return result
+
         MAX_RETRIES = 2
         RETRY_BACKOFF = 0.5
         key = {key_name: {key_type: partition_key}}
-        result: dict
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:

@@ -52,9 +52,12 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 | Method | Description |
 |--------|-------------|
 | `fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Batch-fetch items by partition key. Returns `{table_name: {pk: record}}` — a Python dict nested by table name then pk. Missing keys get `{"not_found": True}`. |
-| `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, or `error`. |
-| `batch_put(table_name, items, key_name, *, dynamodb=None)` | Write up to N items in 25-item chunks with retry. Returns `{"written": N}`. |
-| `delete_by_pk(table_name, partition_key, key_name, key_type, *, dynamodb=None)` | Delete one item with existence check. Returns `{"pk", "status"}`. |
+| `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, commit=False, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, `error`, or `dry_run`. |
+| `batch_update_by_pk(table_name, rows, pk_col, key_name, key_type, update_attr, update_type, value_col, *, increment_attr=None, commit=False, dynamodb=None)` | Update an attribute for each row in a list. Wraps `update_by_pk` per row. Returns a list of per-row result dicts. |
+| `batch_write(table_name, items, key_name, *, commit=False, dynamodb=None)` | Write up to N items in 25-item chunks with retry. Returns `{"written": N}` or `{"written": N, "status": "dry_run"}`. |
+| `delete_by_pk(table_name, partition_key, key_name, key_type, *, commit=False, dynamodb=None)` | Delete one item with existence check. Returns `{"pk", "status"}`. |
+
+All write methods default to `commit=False` (dry run) — pass `commit=True` to execute. In dry-run mode the AWS call is skipped and `status` is `"dry_run"`.
 
 > GSI (Global Secondary Index) support for `ThaDdb` is planned for a future version.
 
@@ -66,7 +69,7 @@ ThaS3(*, status_cb=None, mode="app", region=None, profile=None)
 
 | Method | Description |
 |--------|-------------|
-| `upload_file(bucket=None, key=None, *, uri=None, local_path=None, data=None, encoding="utf-8", s3=None)` | Upload a local file, raw bytes, or a string to S3. Provide `uri` or both `bucket`+`key`. Provide exactly one of `local_path` or `data`. Strings are encoded using `encoding`. Returns `{"bucket", "key", "status", "bytes"}`. |
+| `upload_file(bucket=None, key=None, *, uri=None, local_path=None, data=None, encoding="utf-8", commit=False, s3=None)` | Upload a local file, raw bytes, or a string to S3. Provide `uri` or both `bucket`+`key`. Provide exactly one of `local_path` or `data`. Strings are encoded using `encoding`. Returns `{"bucket", "key", "status", "bytes"}`. |
 | `download_file(bucket=None, key=None, *, uri=None, local_path=None, encoding=None, s3=None)` | Download an S3 object. Provide `uri` or both `bucket`+`key`. Without `local_path`, returns data in `result["data"]` as `str` (if `encoding` set) or `bytes`. With `local_path`, writes raw bytes to disk. Returns `{"bucket", "key", "status", "bytes"}`. |
 
 ### `ThaSSM`
