@@ -163,28 +163,43 @@ class ThaDdb(AWSBase):
         chunks = [all_keys[i : i + MAX_BATCH_GET] for i in range(0, len(all_keys), MAX_BATCH_GET)]
 
         def _process_chunk(chunk: list[dict], client: Any) -> None:
+            chunk_pks = [key[key_name][key_type] for key in chunk]  # type: ignore[index]
             try:
                 response = client.batch_get_item(RequestItems={table_name: {"Keys": chunk}})
             except ClientError as e:
                 msg = e.response["Error"]["Message"]
-                raise RuntimeError(f"DynamoDB batch fetch failed: {msg}") from e
+                for pk in chunk_pks:
+                    found_ids.add(pk)
+                    records_dict[pk] = {"error": msg}
+                return
             _absorb(response.get("Responses", {}).get(table_name, []))
             unprocessed = response.get("UnprocessedKeys", {})
             retries = 0
             while unprocessed and retries < MAX_RETRIES:
                 time.sleep(0.5 * (2**retries))
+                unprocessed_pks = [
+                    key[key_name][key_type]  # type: ignore[index]
+                    for key in unprocessed.get(table_name, {}).get("Keys", [])
+                ]
                 try:
                     response = client.batch_get_item(RequestItems=unprocessed)
                 except ClientError as e:
                     retry_msg = e.response["Error"]["Message"]
-                    raise RuntimeError(f"DynamoDB batch fetch retry failed: {retry_msg}") from e
+                    for pk in unprocessed_pks:
+                        found_ids.add(pk)
+                        records_dict[pk] = {"error": retry_msg}
+                    return
                 _absorb(response.get("Responses", {}).get(table_name, []))
                 unprocessed = response.get("UnprocessedKeys", {})
                 retries += 1
             if unprocessed:
-                raise RuntimeError(
-                    f"Unprocessed keys remain after {retries} retries: {unprocessed}"
-                )
+                remaining_pks = [
+                    key[key_name][key_type]  # type: ignore[index]
+                    for key in unprocessed.get(table_name, {}).get("Keys", [])
+                ]
+                for pk in remaining_pks:
+                    found_ids.add(pk)
+                    records_dict[pk] = {"error": f"Unprocessed after {retries} retries"}
 
         if workers > 1:
             def _threaded(chunk: list[dict]) -> None:
