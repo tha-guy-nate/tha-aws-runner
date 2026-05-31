@@ -89,6 +89,47 @@ class ThaS3(AWSBase):
         self.rows = result
         return result
 
+    def list_files(
+        self,
+        bucket: str,
+        prefix: str = "",
+        *,
+        s3: Any = None,
+    ) -> list[str]:
+        s3_client = self._client(s3)
+        keys: list[str] = []
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
+        self.rows = keys
+        return keys
+
+    def delete_file(
+        self,
+        bucket: str | None = None,
+        key: str | None = None,
+        *,
+        uri: str | None = None,
+        commit: bool = False,
+        s3: Any = None,
+    ) -> dict:
+        if uri is not None:
+            bucket, key = _parse_s3_uri(uri)
+        if bucket is None or key is None:
+            raise ValueError("Provide uri or both bucket and key")
+
+        if not commit:
+            result = {"bucket": bucket, "key": key, "status": "dry_run"}
+            self.rows = result
+            return result
+
+        s3_client = self._client(s3)
+        s3_client.delete_object(Bucket=bucket, Key=key)
+        result = {"bucket": bucket, "key": key, "status": "deleted"}
+        self.rows = result
+        return result
+
     def download_file(
         self,
         bucket: str | None = None,

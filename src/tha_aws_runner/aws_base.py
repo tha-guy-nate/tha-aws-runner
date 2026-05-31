@@ -1,4 +1,5 @@
 import shutil
+import threading
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
@@ -135,8 +136,18 @@ class AWSBase:
     ) -> None:
         self.status_cb = status_cb
         self.mode = mode
+        self._region = region
+        self._profile = profile
         self.clients = AWSClients(region=region, profile=profile)
+        self._thread_local = threading.local()
         self.rows: Any = None
+
+    def _thread_clients(self) -> AWSClients:
+        """Return a per-thread AWSClients instance (one session per thread)."""
+        if not hasattr(self._thread_local, "clients"):
+            self._thread_local.clients = AWSClients(region=self._region, profile=self._profile)
+        clients: AWSClients = self._thread_local.clients
+        return clients
 
     def _progress_iter(
         self,
