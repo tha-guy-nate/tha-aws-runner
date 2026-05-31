@@ -1,10 +1,76 @@
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from botocore.exceptions import ClientError
 
 from tha_aws_runner.aws_base import AWSBase
+
+_THROTTLE_CODES = frozenset({
+    "ProvisionedThroughputExceededException",
+    "ThrottlingException",
+    "RequestLimitExceeded",
+})
+
+
+def _is_throttled(code: str | None) -> bool:
+    return code in _THROTTLE_CODES
+
+
+def _extract_any(attr: dict) -> Any:
+    if not attr:
+        return None
+    return next(iter(attr.values()), None)
+
+
+def _extract_typed(attr: dict, expected_type: str = "S") -> Any:
+    if not attr:
+        return None
+    return attr.get(expected_type, None)
+
+
+def _to_ddb_attr(val: Any, update_type: str) -> dict:
+    if isinstance(val, dict) and len(val) == 1:
+        t, v = next(iter(val.items()))
+        if t != update_type:
+            raise ValueError(f"Typed value type {t} does not match update_type {update_type}")
+        val = v
+
+    t = update_type.upper()
+
+    if t == "BOOL":
+        if val is True or val is False:
+            return {"BOOL": val}
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("true", "t", "1", "yes", "y"):
+                return {"BOOL": True}
+            if s in ("false", "f", "0", "no", "n"):
+                return {"BOOL": False}
+        raise ValueError("BOOL only allows True/False")
+
+    if t == "S":
+        if val is None:
+            raise ValueError("S does not allow None (use NULL)")
+        return {"S": str(val)}
+
+    if t == "N":
+        if val is None:
+            raise ValueError("N does not allow None (use NULL)")
+        if isinstance(val, (int, float)):
+            return {"N": str(val)}
+        if isinstance(val, str):
+            float(val.strip())
+            return {"N": val.strip()}
+        raise ValueError("N requires int/float or numeric string")
+
+    if t == "NULL":
+        if val not in (None, ""):
+            raise ValueError("NULL expects None/blank")
+        return {"NULL": True}
+
+    raise ValueError(f"Unsupported update_type: {update_type}")
 
 
 class ThaDdb(AWSBase):
@@ -29,51 +95,108 @@ class ThaDdb(AWSBase):
     def fetch_by_pk(
         self,
         table_name: str,
-        partition_keys: list[str],
+        partition_key: str,
         *,
         fields: dict[str, str] | None = None,
         key_name: str | None = None,
         key_type: str | None = None,
         dynamodb: Any = None,
-    ) -> dict[str, dict[str, dict]]:
+    ) -> dict:
         dynamodb = self._client(dynamodb)
-
-        def extract_any(attr: dict) -> Any:
-            if not attr:
-                return None
-            return next(iter(attr.values()), None)
-
-        def extract_typed(attr: dict, expected_type: str = "S") -> Any:
-            if not attr:
-                return None
-            return attr.get(expected_type, None)
-
-        keys = [{key_name: {key_type: pk}} for pk in partition_keys]
-
+        key = {key_name: {key_type: partition_key}}
         try:
-            response = dynamodb.batch_get_item(RequestItems={table_name: {"Keys": keys}})
+            response = dynamodb.get_item(TableName=table_name, Key=key)
         except ClientError as e:
             msg = e.response["Error"]["Message"]
-            raise RuntimeError(f"DynamoDB batch fetch failed: {msg}") from e
+            raise RuntimeError(f"DynamoDB get_item failed: {msg}") from e
+        item = response.get("Item")
+        if item is None:
+            result: dict = (
+                {"not_found": True}
+                if fields is None
+                else {field: "not found" for field in fields}
+            )
+        elif fields is None:
+            result = {k: _extract_any(v) for k, v in item.items() if k != key_name}
+        else:
+            result = {
+                field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                for field, expected_type in fields.items()
+            }
+        self.rows = result
+        return result
 
-        items = response.get("Responses", {}).get(table_name, [])
+    def batch_fetch_by_pk(
+        self,
+        table_name: str,
+        partition_keys: list[str],
+        *,
+        fields: dict[str, str] | None = None,
+        key_name: str | None = None,
+        key_type: str | None = None,
+        workers: int = 1,
+        dynamodb: Any = None,
+    ) -> dict[str, dict[str, dict]]:
+        MAX_BATCH_GET = 100
+        MAX_RETRIES = 2
+
         found_ids: set[str] = set()
         records_dict: dict[str, dict] = {}
 
-        for item in items:
-            pk_value = extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
-            if pk_value is None:
-                continue
-            found_ids.add(pk_value)
-            if fields is None:
-                records_dict[pk_value] = {
-                    k: extract_any(v) for k, v in item.items() if k != key_name
-                }
-            else:
-                records_dict[pk_value] = {
-                    field: extract_typed(item.get(field), expected_type)
-                    for field, expected_type in fields.items()
-                }
+        def _absorb(items: list[dict]) -> None:
+            for item in items:
+                pk_value = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
+                if pk_value is None:
+                    continue
+                found_ids.add(pk_value)
+                if fields is None:
+                    records_dict[pk_value] = {
+                        k: _extract_any(v) for k, v in item.items() if k != key_name
+                    }
+                else:
+                    records_dict[pk_value] = {
+                        field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                        for field, expected_type in fields.items()
+                    }
+
+        all_keys = [{key_name: {key_type: pk}} for pk in partition_keys]
+        chunks = [all_keys[i : i + MAX_BATCH_GET] for i in range(0, len(all_keys), MAX_BATCH_GET)]
+
+        def _process_chunk(chunk: list[dict], client: Any) -> None:
+            try:
+                response = client.batch_get_item(RequestItems={table_name: {"Keys": chunk}})
+            except ClientError as e:
+                msg = e.response["Error"]["Message"]
+                raise RuntimeError(f"DynamoDB batch fetch failed: {msg}") from e
+            _absorb(response.get("Responses", {}).get(table_name, []))
+            unprocessed = response.get("UnprocessedKeys", {})
+            retries = 0
+            while unprocessed and retries < MAX_RETRIES:
+                time.sleep(0.5 * (2**retries))
+                try:
+                    response = client.batch_get_item(RequestItems=unprocessed)
+                except ClientError as e:
+                    retry_msg = e.response["Error"]["Message"]
+                    raise RuntimeError(f"DynamoDB batch fetch retry failed: {retry_msg}") from e
+                _absorb(response.get("Responses", {}).get(table_name, []))
+                unprocessed = response.get("UnprocessedKeys", {})
+                retries += 1
+            if unprocessed:
+                raise RuntimeError(
+                    f"Unprocessed keys remain after {retries} retries: {unprocessed}"
+                )
+
+        if workers > 1:
+            def _threaded(chunk: list[dict]) -> None:
+                client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
+                _process_chunk(chunk, client)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_threaded, chunks))
+        else:
+            client = self._client(dynamodb)
+            for chunk in chunks:
+                _process_chunk(chunk, client)
 
         for pk in partition_keys:
             if pk not in found_ids:
@@ -82,35 +205,6 @@ class ThaDdb(AWSBase):
                     if fields is None
                     else {field: "not found" for field in fields}
                 )
-
-        unprocessed = response.get("UnprocessedKeys", {})
-        retries = 0
-        while unprocessed and retries < 2:
-            time.sleep(0.5 * (2**retries))
-            try:
-                response = dynamodb.batch_get_item(RequestItems=unprocessed)
-            except ClientError as e:
-                retry_msg = e.response["Error"]["Message"]
-                raise RuntimeError(f"DynamoDB batch fetch retry failed: {retry_msg}") from e
-            for item in response.get("Responses", {}).get(table_name, []):
-                pk_value = extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
-                if pk_value is None:
-                    continue
-                found_ids.add(pk_value)
-                if fields is None:
-                    records_dict[pk_value] = {
-                    k: extract_any(v) for k, v in item.items() if k != key_name
-                }
-                else:
-                    records_dict[pk_value] = {
-                        field: extract_typed(item.get(field), expected_type)
-                        for field, expected_type in fields.items()
-                    }
-            unprocessed = response.get("UnprocessedKeys", {})
-            retries += 1
-
-        if unprocessed:
-            raise RuntimeError(f"Unprocessed keys remain after {retries} retries: {unprocessed}")
 
         result = {table_name: records_dict}
         self.rows = result
@@ -135,51 +229,7 @@ class ThaDdb(AWSBase):
         MAX_RETRIES = 2
         RETRY_BACKOFF = 0.5
 
-        def to_ddb_attr(val: Any) -> dict:
-            if isinstance(val, dict) and len(val) == 1:
-                t, v = next(iter(val.items()))
-                if t != update_type:
-                    raise ValueError(
-                        f"Typed value type {t} does not match update_type {update_type}"
-                    )
-                val = v
-
-            t = update_type.upper()
-
-            if t == "BOOL":
-                if val is True or val is False:
-                    return {"BOOL": val}
-                if isinstance(val, str):
-                    s = val.strip().lower()
-                    if s in ("true", "t", "1", "yes", "y"):
-                        return {"BOOL": True}
-                    if s in ("false", "f", "0", "no", "n"):
-                        return {"BOOL": False}
-                raise ValueError("BOOL only allows True/False")
-
-            if t == "S":
-                if val is None:
-                    raise ValueError("S does not allow None (use NULL)")
-                return {"S": str(val)}
-
-            if t == "N":
-                if val is None:
-                    raise ValueError("N does not allow None (use NULL)")
-                if isinstance(val, (int, float)):
-                    return {"N": str(val)}
-                if isinstance(val, str):
-                    float(val.strip())
-                    return {"N": val.strip()}
-                raise ValueError("N requires int/float or numeric string")
-
-            if t == "NULL":
-                if val not in (None, ""):
-                    raise ValueError("NULL expects None/blank")
-                return {"NULL": True}
-
-            raise ValueError(f"Unsupported update_type: {update_type}")
-
-        ddb_update_value = to_ddb_attr(update_value)
+        ddb_update_value = _to_ddb_attr(update_value, update_type)
 
         if not commit:
             result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
@@ -235,12 +285,7 @@ class ThaDdb(AWSBase):
                     self.rows = result
                     return result
 
-                throttled = code in (
-                    "ProvisionedThroughputExceededException",
-                    "ThrottlingException",
-                    "RequestLimitExceeded",
-                )
-                if throttled:
+                if _is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
                         self.rows = result
@@ -268,26 +313,69 @@ class ThaDdb(AWSBase):
         value_col: str,
         *,
         increment_attr: str | None = None,
+        workers: int = 1,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict]:
-        results = []
-        for row in rows:
-            pk = str(row.get(pk_col) or "")
-            val = row.get(value_col)
-            result = self.update_by_pk(
-                table_name,
-                pk,
-                key_name,
-                key_type,
-                update_attr,
-                update_type,
-                val,
-                increment_attr=increment_attr,
-                commit=commit,
-                dynamodb=dynamodb,
-            )
-            results.append(result)
+        results: list[dict] = [{}] * len(rows)
+
+        if workers > 1:
+            def _process(args: tuple[int, dict]) -> None:
+                idx, row = args
+                client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
+                pk = str(row.get(pk_col) or "")
+                val = row.get(value_col)
+                results[idx] = self.update_by_pk(
+                    table_name, pk, key_name, key_type, update_attr, update_type, val,
+                    increment_attr=increment_attr, commit=commit, dynamodb=client,
+                )
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_process, enumerate(rows)))
+        else:
+            for idx, row in enumerate(rows):
+                pk = str(row.get(pk_col) or "")
+                val = row.get(value_col)
+                results[idx] = self.update_by_pk(
+                    table_name, pk, key_name, key_type, update_attr, update_type, val,
+                    increment_attr=increment_attr, commit=commit, dynamodb=dynamodb,
+                )
+
+        self.rows = results
+        return results
+
+    def batch_delete_by_pk(
+        self,
+        table_name: str,
+        rows: list[dict],
+        pk_col: str,
+        key_name: str,
+        key_type: str,
+        *,
+        workers: int = 1,
+        commit: bool = False,
+        dynamodb: Any = None,
+    ) -> list[dict]:
+        results: list[dict] = [{}] * len(rows)
+
+        if workers > 1:
+            def _process(args: tuple[int, dict]) -> None:
+                idx, row = args
+                client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
+                pk = str(row.get(pk_col) or "")
+                results[idx] = self.delete_by_pk(
+                    table_name, pk, key_name, key_type, commit=commit, dynamodb=client,
+                )
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_process, enumerate(rows)))
+        else:
+            for idx, row in enumerate(rows):
+                pk = str(row.get(pk_col) or "")
+                results[idx] = self.delete_by_pk(
+                    table_name, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
+                )
+
         self.rows = results
         return results
 
@@ -295,7 +383,6 @@ class ThaDdb(AWSBase):
         self,
         table_name: str,
         items: list[dict],
-        key_name: str,
         *,
         commit: bool = False,
         dynamodb: Any = None,
@@ -387,12 +474,7 @@ class ThaDdb(AWSBase):
                     self.rows = result
                     return result
 
-                throttled = code in (
-                    "ProvisionedThroughputExceededException",
-                    "ThrottlingException",
-                    "RequestLimitExceeded",
-                )
-                if throttled:
+                if _is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
                         self.rows = result

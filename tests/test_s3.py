@@ -132,6 +132,70 @@ def test_upload_file_uses_injected_client():
     other.put_object.assert_not_called()
 
 
+# --- list_files ---
+
+
+def test_list_files_returns_keys(mock_s3_client):
+    mock_s3_client.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "data/a.csv"}, {"Key": "data/b.csv"}]},
+    ]
+    s3 = make_s3(mock_s3_client)
+    result = s3.list_files("my-bucket", "data/")
+    assert result == ["data/a.csv", "data/b.csv"]
+    assert s3.rows is result
+
+
+def test_list_files_empty_prefix(mock_s3_client):
+    mock_s3_client.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "file.csv"}]},
+    ]
+    s3 = make_s3(mock_s3_client)
+    result = s3.list_files("my-bucket")
+    assert result == ["file.csv"]
+
+
+def test_list_files_no_contents(mock_s3_client):
+    mock_s3_client.get_paginator.return_value.paginate.return_value = [{}]
+    s3 = make_s3(mock_s3_client)
+    result = s3.list_files("my-bucket", "empty/")
+    assert result == []
+
+
+# --- delete_file ---
+
+
+def test_delete_file_dry_run(mock_s3_client):
+    s3 = make_s3(mock_s3_client)
+    result = s3.delete_file("my-bucket", "data.csv")
+    assert result == {"bucket": "my-bucket", "key": "data.csv", "status": "dry_run"}
+    mock_s3_client.delete_object.assert_not_called()
+    assert s3.rows is result
+
+
+def test_delete_file_commit(mock_s3_client):
+    mock_s3_client.delete_object.return_value = {}
+    s3 = make_s3(mock_s3_client)
+    result = s3.delete_file("my-bucket", "data.csv", commit=True)
+    assert result == {"bucket": "my-bucket", "key": "data.csv", "status": "deleted"}
+    mock_s3_client.delete_object.assert_called_once_with(Bucket="my-bucket", Key="data.csv")
+    assert s3.rows is result
+
+
+def test_delete_file_via_uri(mock_s3_client):
+    mock_s3_client.delete_object.return_value = {}
+    s3 = make_s3(mock_s3_client)
+    result = s3.delete_file(uri="s3://my-bucket/data.csv", commit=True)
+    assert result["bucket"] == "my-bucket"
+    assert result["key"] == "data.csv"
+    assert result["status"] == "deleted"
+
+
+def test_delete_file_no_bucket_or_uri_raises(mock_s3_client):
+    s3 = make_s3(mock_s3_client)
+    with pytest.raises(ValueError, match="Provide uri or both bucket and key"):
+        s3.delete_file()
+
+
 # --- download_file ---
 
 
