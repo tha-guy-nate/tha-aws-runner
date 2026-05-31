@@ -137,11 +137,20 @@ def test_batch_fetch_by_pk_threaded(mock_ddb_client):
     assert ddb.rows is result
 
 
-def test_batch_fetch_by_pk_raises_on_client_error(mock_ddb_client):
-    mock_ddb_client.batch_get_item.side_effect = _client_error("AccessDeniedException")
+def test_batch_fetch_by_pk_error_in_chunk_returns_partial(mock_ddb_client):
+    # chunk 1 succeeds, chunk 2 fails — chunk 1 data should still be returned
+    def _side_effect(**kwargs):
+        keys = kwargs["RequestItems"]["my_table"]["Keys"]
+        if len(keys) == 100:
+            return {"Responses": {"my_table": [{"id": {"S": f"pk{i}"}, "val": {"S": str(i)}} for i in range(100)]}, "UnprocessedKeys": {}}
+        raise _client_error("AccessDeniedException", "Access denied")
+
+    mock_ddb_client.batch_get_item.side_effect = _side_effect
     ddb = make_ddb(mock_ddb_client)
-    with pytest.raises(RuntimeError, match="DynamoDB batch fetch failed"):
-        ddb.batch_fetch_by_pk("my_table", ["pk1"], key_name="id", key_type="S")
+    pks = [f"pk{i}" for i in range(101)]
+    result = ddb.batch_fetch_by_pk("my_table", pks, key_name="id", key_type="S")
+    assert result["my_table"]["pk0"]["val"] == "0"
+    assert result["my_table"]["pk100"] == {"error": "Access denied"}
 
 
 # --- update_by_pk ---
