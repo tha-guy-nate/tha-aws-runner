@@ -142,7 +142,8 @@ def test_batch_fetch_by_pk_error_in_chunk_returns_partial(mock_ddb_client):
     def _side_effect(**kwargs):
         keys = kwargs["RequestItems"]["my_table"]["Keys"]
         if len(keys) == 100:
-            return {"Responses": {"my_table": [{"id": {"S": f"pk{i}"}, "val": {"S": str(i)}} for i in range(100)]}, "UnprocessedKeys": {}}
+            items = [{"id": {"S": f"pk{i}"}, "val": {"S": str(i)}} for i in range(100)]
+            return {"Responses": {"my_table": items}, "UnprocessedKeys": {}}
         raise _client_error("AccessDeniedException", "Access denied")
 
     mock_ddb_client.batch_get_item.side_effect = _side_effect
