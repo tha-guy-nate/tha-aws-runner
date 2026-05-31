@@ -46,10 +46,18 @@ def test_parse_s3_uri_empty_bucket_raises():
 # --- upload_file ---
 
 
+def test_upload_file_dry_run(mock_s3_client):
+    s3 = make_s3(mock_s3_client)
+    result = s3.upload_file("my-bucket", "data.csv", data=b"hello")
+    assert result == {"bucket": "my-bucket", "key": "data.csv", "status": "dry_run", "bytes": 5}
+    mock_s3_client.put_object.assert_not_called()
+    assert s3.rows is result
+
+
 def test_upload_file_from_str(mock_s3_client):
     mock_s3_client.put_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.upload_file("my-bucket", "data.csv", data="col1,col2\n1,2")
+    result = s3.upload_file("my-bucket", "data.csv", data="col1,col2\n1,2", commit=True)
     assert result["bytes"] == len(b"col1,col2\n1,2")
     mock_s3_client.put_object.assert_called_once_with(
         Bucket="my-bucket", Key="data.csv", Body=b"col1,col2\n1,2"
@@ -59,14 +67,14 @@ def test_upload_file_from_str(mock_s3_client):
 def test_upload_file_from_str_custom_encoding(mock_s3_client):
     mock_s3_client.put_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.upload_file("b", "k", data="héllo", encoding="latin-1")
+    result = s3.upload_file("b", "k", data="héllo", encoding="latin-1", commit=True)
     assert result["bytes"] == len("héllo".encode("latin-1"))
 
 
 def test_upload_file_from_bytes(mock_s3_client):
     mock_s3_client.put_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.upload_file("my-bucket", "path/to/key.csv", data=b"hello,world")
+    result = s3.upload_file("my-bucket", "path/to/key.csv", data=b"hello,world", commit=True)
     assert result == {
         "bucket": "my-bucket", "key": "path/to/key.csv", "status": "uploaded", "bytes": 11
     }
@@ -81,7 +89,7 @@ def test_upload_file_from_path(mock_s3_client, tmp_path):
     local.write_bytes(b"file content")
     mock_s3_client.put_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.upload_file("my-bucket", "test.txt", local_path=str(local))
+    result = s3.upload_file("my-bucket", "test.txt", local_path=str(local), commit=True)
     assert result["status"] == "uploaded"
     assert result["bytes"] == 12
 
@@ -89,7 +97,7 @@ def test_upload_file_from_path(mock_s3_client, tmp_path):
 def test_upload_file_via_uri(mock_s3_client):
     mock_s3_client.put_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.upload_file(uri="s3://my-bucket/path/to/key.csv", data=b"hello")
+    result = s3.upload_file(uri="s3://my-bucket/path/to/key.csv", data=b"hello", commit=True)
     assert result["bucket"] == "my-bucket"
     assert result["key"] == "path/to/key.csv"
     assert result["status"] == "uploaded"
@@ -119,7 +127,7 @@ def test_upload_file_uses_injected_client():
     other = MagicMock()
     s3 = ThaS3()
     s3._s3 = other
-    result = s3.upload_file("b", "k", data=b"x", s3=injected)
+    result = s3.upload_file("b", "k", data=b"x", commit=True, s3=injected)
     assert result["status"] == "uploaded"
     other.put_object.assert_not_called()
 
