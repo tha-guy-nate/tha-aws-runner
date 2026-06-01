@@ -289,7 +289,7 @@ def test_batch_update_by_pk_dry_run(mock_ddb_client):
         {"user_id": "pk2", "status_col": "inactive"},
     ]
     result = ddb.batch_update_by_pk(
-        "my_table", rows, "user_id", "id", "S", "status", "S", "status_col"
+        rows, "user_id", "id", "S", "status", "S", "status_col", table_name="my_table"
     )
     assert result == [{"pk": "pk1", "status": "dry_run"}, {"pk": "pk2", "status": "dry_run"}]
     mock_ddb_client.update_item.assert_not_called()
@@ -304,7 +304,8 @@ def test_batch_update_by_pk_commit(mock_ddb_client):
         {"user_id": "pk2", "status_col": "inactive"},
     ]
     result = ddb.batch_update_by_pk(
-        "my_table", rows, "user_id", "id", "S", "status", "S", "status_col", commit=True
+        rows, "user_id", "id", "S", "status", "S", "status_col",
+        table_name="my_table", commit=True,
     )
     assert len(result) == 2
     assert result[0]["status"] == "updated"
@@ -317,13 +318,39 @@ def test_batch_update_by_pk_threaded(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": f"pk{i}", "status_col": "active"} for i in range(6)]
     result = ddb.batch_update_by_pk(
-        "my_table", rows, "user_id", "id", "S", "status", "S", "status_col",
-        workers=3, commit=True, dynamodb=mock_ddb_client,
+        rows, "user_id", "id", "S", "status", "S", "status_col",
+        table_name="my_table", workers=3, commit=True, dynamodb=mock_ddb_client,
     )
     assert len(result) == 6
     assert all(r["status"] == "updated" for r in result)
     assert mock_ddb_client.update_item.call_count == 6
     assert ddb.rows is result
+
+
+def test_batch_update_by_pk_table_name_col(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {"Attributes": {"id": {"S": "pk1"}}}
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"user_id": "pk1", "status_col": "active", "tbl": "orders"},
+        {"user_id": "pk2", "status_col": "inactive", "tbl": "users"},
+    ]
+    result = ddb.batch_update_by_pk(
+        rows, "user_id", "id", "S", "status", "S", "status_col",
+        table_name_col="tbl", commit=True,
+    )
+    assert len(result) == 2
+    assert result[0]["status"] == "updated"
+    assert result[1]["status"] == "updated"
+    calls = mock_ddb_client.update_item.call_args_list
+    assert calls[0][1]["TableName"] == "orders"
+    assert calls[1][1]["TableName"] == "users"
+
+
+def test_batch_update_by_pk_requires_table_name_or_col(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    rows = [{"user_id": "pk1", "status_col": "active"}]
+    with pytest.raises(ValueError, match="table_name"):
+        ddb.batch_update_by_pk(rows, "user_id", "id", "S", "status", "S", "status_col")
 
 
 # --- batch_delete_by_pk ---
@@ -332,7 +359,7 @@ def test_batch_update_by_pk_threaded(mock_ddb_client):
 def test_batch_delete_by_pk_dry_run(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": "pk1"}, {"user_id": "pk2"}]
-    result = ddb.batch_delete_by_pk("my_table", rows, "user_id", "id", "S")
+    result = ddb.batch_delete_by_pk(rows, "user_id", "id", "S", table_name="my_table")
     assert result == [{"pk": "pk1", "status": "dry_run"}, {"pk": "pk2", "status": "dry_run"}]
     mock_ddb_client.delete_item.assert_not_called()
     assert ddb.rows is result
@@ -342,7 +369,7 @@ def test_batch_delete_by_pk_commit(mock_ddb_client):
     mock_ddb_client.delete_item.return_value = {}
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": "pk1"}, {"user_id": "pk2"}]
-    result = ddb.batch_delete_by_pk("my_table", rows, "user_id", "id", "S", commit=True)
+    result = ddb.batch_delete_by_pk(rows, "user_id", "id", "S", table_name="my_table", commit=True)
     assert len(result) == 2
     assert result[0]["status"] == "deleted"
     assert result[1]["status"] == "deleted"
@@ -354,13 +381,38 @@ def test_batch_delete_by_pk_threaded(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": f"pk{i}"} for i in range(6)]
     result = ddb.batch_delete_by_pk(
-        "my_table", rows, "user_id", "id", "S",
-        workers=3, commit=True, dynamodb=mock_ddb_client,
+        rows, "user_id", "id", "S",
+        table_name="my_table", workers=3, commit=True, dynamodb=mock_ddb_client,
     )
     assert len(result) == 6
     assert all(r["status"] == "deleted" for r in result)
     assert mock_ddb_client.delete_item.call_count == 6
     assert ddb.rows is result
+
+
+def test_batch_delete_by_pk_table_name_col(mock_ddb_client):
+    mock_ddb_client.delete_item.return_value = {}
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"user_id": "pk1", "tbl": "orders"},
+        {"user_id": "pk2", "tbl": "users"},
+    ]
+    result = ddb.batch_delete_by_pk(
+        rows, "user_id", "id", "S", table_name_col="tbl", commit=True,
+    )
+    assert len(result) == 2
+    assert result[0]["status"] == "deleted"
+    assert result[1]["status"] == "deleted"
+    calls = mock_ddb_client.delete_item.call_args_list
+    assert calls[0][1]["TableName"] == "orders"
+    assert calls[1][1]["TableName"] == "users"
+
+
+def test_batch_delete_by_pk_requires_table_name_or_col(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    rows = [{"user_id": "pk1"}]
+    with pytest.raises(ValueError, match="table_name"):
+        ddb.batch_delete_by_pk(rows, "user_id", "id", "S")
 
 
 # --- batch_write ---

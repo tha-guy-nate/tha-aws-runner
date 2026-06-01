@@ -406,7 +406,6 @@ class ThaDdb(AWSBase):
 
     def batch_update_by_pk(
         self,
-        table_name: str,
         rows: list[dict],
         pk_col: str,
         key_name: str,
@@ -415,21 +414,27 @@ class ThaDdb(AWSBase):
         update_type: str,
         value_col: str,
         *,
+        table_name: str | None = None,
+        table_name_col: str | None = None,
         increment_attr: str | None = None,
         workers: int = 1,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict]:
+        if (table_name is None) == (table_name_col is None):
+            raise ValueError("Provide exactly one of table_name or table_name_col")
+
         results: list[dict] = [{}] * len(rows)
 
         if workers > 1:
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
+                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
-                    table_name, pk, key_name, key_type, update_attr, update_type, val,
+                    tbl, pk, key_name, key_type, update_attr, update_type, val,
                     increment_attr=increment_attr, commit=commit, dynamodb=client, _set_rows=False,
                 )
 
@@ -437,10 +442,11 @@ class ThaDdb(AWSBase):
                 list(pool.map(_process, enumerate(rows)))
         else:
             for idx, row in enumerate(rows):
+                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
-                    table_name, pk, key_name, key_type, update_attr, update_type, val,
+                    tbl, pk, key_name, key_type, update_attr, update_type, val,
                     increment_attr=increment_attr, commit=commit, dynamodb=dynamodb,
                     _set_rows=False,
                 )
@@ -450,25 +456,30 @@ class ThaDdb(AWSBase):
 
     def batch_delete_by_pk(
         self,
-        table_name: str,
         rows: list[dict],
         pk_col: str,
         key_name: str,
         key_type: str,
         *,
+        table_name: str | None = None,
+        table_name_col: str | None = None,
         workers: int = 1,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict]:
+        if (table_name is None) == (table_name_col is None):
+            raise ValueError("Provide exactly one of table_name or table_name_col")
+
         results: list[dict] = [{}] * len(rows)
 
         if workers > 1:
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
+                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
-                    table_name, pk, key_name, key_type, commit=commit, dynamodb=client,
+                    tbl, pk, key_name, key_type, commit=commit, dynamodb=client,
                     _set_rows=False,
                 )
 
@@ -476,9 +487,10 @@ class ThaDdb(AWSBase):
                 list(pool.map(_process, enumerate(rows)))
         else:
             for idx, row in enumerate(rows):
+                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
-                    table_name, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
+                    tbl, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
                     _set_rows=False,
                 )
 
