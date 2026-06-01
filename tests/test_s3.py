@@ -259,3 +259,75 @@ def test_download_file_uses_injected_client():
     result = s3.download_file("b", "k", s3=injected)
     assert result["status"] == "downloaded"
     other.get_object.assert_not_called()
+
+
+# --- batch_download ---
+
+
+def test_batch_download_from_keys(mock_s3_client):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"data")}
+    s3 = make_s3(mock_s3_client)
+    result = s3.batch_download("my-bucket", ["a.csv", "b.csv"])
+    assert len(result) == 2
+    assert all(r["status"] == "downloaded" for r in result)
+    assert result[0]["key"] == "a.csv"
+    assert result[1]["key"] == "b.csv"
+    assert s3.rows is result
+
+
+def test_batch_download_from_uris(mock_s3_client):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"data")}
+    s3 = make_s3(mock_s3_client)
+    result = s3.batch_download(uris=["s3://my-bucket/a.csv", "s3://my-bucket/b.csv"])
+    assert len(result) == 2
+    assert result[0]["bucket"] == "my-bucket"
+    assert result[1]["key"] == "b.csv"
+
+
+def test_batch_download_lists_bucket_when_no_keys(mock_s3_client):
+    mock_s3_client.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "x.csv"}, {"Key": "y.csv"}]}
+    ]
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"data")}
+    s3 = make_s3(mock_s3_client)
+    result = s3.batch_download("my-bucket")
+    assert len(result) == 2
+    assert result[0]["key"] == "x.csv"
+
+
+def test_batch_download_to_local_dir(mock_s3_client, tmp_path):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"hello")}
+    s3 = make_s3(mock_s3_client)
+    result = s3.batch_download("my-bucket", ["reports/a.csv"], local_dir=str(tmp_path))
+    assert result[0]["status"] == "downloaded"
+    assert (tmp_path / "reports" / "a.csv").read_bytes() == b"hello"
+
+
+def test_batch_download_error_captured_per_file(mock_s3_client):
+    def _side_effect(**kwargs):
+        if kwargs["Key"] == "bad.csv":
+            raise Exception("S3 error")
+        return {"Body": BytesIO(b"ok")}
+
+    mock_s3_client.get_object.side_effect = _side_effect
+    s3 = make_s3(mock_s3_client)
+    result = s3.batch_download("my-bucket", ["good.csv", "bad.csv"])
+    assert result[0]["status"] == "downloaded"
+    assert result[1]["status"] == "error"
+    assert "S3 error" in result[1]["error"]
+
+
+def test_batch_download_threaded(mock_s3_client):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"data")}
+    s3 = make_s3(mock_s3_client)
+    keys = [f"file{i}.csv" for i in range(6)]
+    result = s3.batch_download("my-bucket", keys, workers=3, s3=mock_s3_client)
+    assert len(result) == 6
+    assert all(r["status"] == "downloaded" for r in result)
+    assert mock_s3_client.get_object.call_count == 6
+
+
+def test_batch_download_no_bucket_or_uris_raises(mock_s3_client):
+    s3 = make_s3(mock_s3_client)
+    with pytest.raises(ValueError, match="Provide uris or bucket"):
+        s3.batch_download()

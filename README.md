@@ -79,6 +79,7 @@ ThaS3(*, status_cb=None, mode="app", region=None, profile=None)
 | `list_files(bucket, prefix="", *, s3=None)` | List all object keys in a bucket under an optional prefix. Returns a `list[str]` of keys. Paginates automatically. |
 | `delete_file(bucket=None, key=None, *, uri=None, commit=False, s3=None)` | Delete an S3 object. Provide `uri` or both `bucket`+`key`. Returns `{"bucket", "key", "status"}`. |
 | `download_file(bucket=None, key=None, *, uri=None, local_path=None, encoding=None, s3=None)` | Download an S3 object. Provide `uri` or both `bucket`+`key`. Without `local_path`, returns data in `result["data"]` as `str` (if `encoding` set) or `bytes`. With `local_path`, writes raw bytes to disk. Returns `{"bucket", "key", "status", "bytes"}`. |
+| `batch_download(bucket=None, keys=None, *, uris=None, local_dir=None, encoding=None, workers=1, s3=None)` | Download multiple S3 objects. Provide `uris` (list of S3 URIs) or `bucket` with optional `keys` (omit `keys` to download all objects in the bucket). With `local_dir`, files are written to disk preserving the key path structure. Pass `workers>1` to parallelize. Returns a `list[dict]` of per-file results; failed files get `{"status": "error", "error": msg}` rather than raising. |
 
 ### `ThaSSM`
 
