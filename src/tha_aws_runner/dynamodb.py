@@ -108,20 +108,42 @@ class ThaDdb(AWSBase):
             response = dynamodb.get_item(TableName=table_name, Key=key)
         except ClientError as e:
             msg = e.response["Error"]["Message"]
-            raise RuntimeError(f"DynamoDB get_item failed: {msg}") from e
+            result: dict = {
+                "status": "error",
+                "message": f"DynamoDB get_item failed: {msg}",
+                "pk": partition_key,
+                "table": table_name,
+                "data": None,
+            }
+            self.rows = result
+            return result
         item = response.get("Item")
         if item is None:
-            result: dict = (
-                {"not_found": True}
-                if fields is None
-                else {field: "not found" for field in fields}
-            )
+            result = {
+                "status": "not_found",
+                "message": "Item not found",
+                "pk": partition_key,
+                "table": table_name,
+                "data": None,
+            }
         elif fields is None:
-            result = {k: _extract_any(v) for k, v in item.items() if k != key_name}
+            result = {
+                "status": "ok",
+                "message": None,
+                "pk": partition_key,
+                "table": table_name,
+                "data": {k: _extract_any(v) for k, v in item.items() if k != key_name},
+            }
         else:
             result = {
-                field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
-                for field, expected_type in fields.items()
+                "status": "ok",
+                "message": None,
+                "pk": partition_key,
+                "table": table_name,
+                "data": {
+                    field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                    for field, expected_type in fields.items()
+                },
             }
         self.rows = result
         return result
@@ -150,14 +172,19 @@ class ThaDdb(AWSBase):
                     continue
                 found_ids.add(pk_value)
                 if fields is None:
-                    records_dict[pk_value] = {
-                        k: _extract_any(v) for k, v in item.items() if k != key_name
-                    }
+                    data = {k: _extract_any(v) for k, v in item.items() if k != key_name}
                 else:
-                    records_dict[pk_value] = {
+                    data = {
                         field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
                         for field, expected_type in fields.items()
                     }
+                records_dict[pk_value] = {
+                    "status": "ok",
+                    "message": None,
+                    "pk": pk_value,
+                    "table": table_name,
+                    "data": data,
+                }
 
         all_keys = [{key_name: {key_type: pk}} for pk in partition_keys]
         chunks = [all_keys[i : i + MAX_BATCH_GET] for i in range(0, len(all_keys), MAX_BATCH_GET)]
@@ -170,7 +197,13 @@ class ThaDdb(AWSBase):
                 msg = e.response["Error"]["Message"]
                 for pk in chunk_pks:
                     found_ids.add(pk)
-                    records_dict[pk] = {"error": msg}
+                    records_dict[pk] = {
+                        "status": "error",
+                        "message": msg,
+                        "pk": pk,
+                        "table": table_name,
+                        "data": None,
+                    }
                 return
             _absorb(response.get("Responses", {}).get(table_name, []))
             unprocessed = response.get("UnprocessedKeys", {})
@@ -187,7 +220,13 @@ class ThaDdb(AWSBase):
                     retry_msg = e.response["Error"]["Message"]
                     for pk in unprocessed_pks:
                         found_ids.add(pk)
-                        records_dict[pk] = {"error": retry_msg}
+                        records_dict[pk] = {
+                            "status": "error",
+                            "message": retry_msg,
+                            "pk": pk,
+                            "table": table_name,
+                            "data": None,
+                        }
                     return
                 _absorb(response.get("Responses", {}).get(table_name, []))
                 unprocessed = response.get("UnprocessedKeys", {})
@@ -199,7 +238,13 @@ class ThaDdb(AWSBase):
                 ]
                 for pk in remaining_pks:
                     found_ids.add(pk)
-                    records_dict[pk] = {"error": f"Unprocessed after {retries} retries"}
+                    records_dict[pk] = {
+                        "status": "error",
+                        "message": f"Unprocessed after {retries} retries",
+                        "pk": pk,
+                        "table": table_name,
+                        "data": None,
+                    }
 
         if workers > 1:
             def _threaded(chunk: list[dict]) -> None:
@@ -215,11 +260,13 @@ class ThaDdb(AWSBase):
 
         for pk in partition_keys:
             if pk not in found_ids:
-                records_dict[pk] = (
-                    {"not_found": True}
-                    if fields is None
-                    else {field: "not found" for field in fields}
-                )
+                records_dict[pk] = {
+                    "status": "not_found",
+                    "message": "Item not found",
+                    "pk": pk,
+                    "table": table_name,
+                    "data": None,
+                }
 
         result = {table_name: records_dict}
         self.rows = result

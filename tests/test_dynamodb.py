@@ -25,7 +25,10 @@ def test_fetch_by_pk_happy(mock_ddb_client):
     }
     ddb = make_ddb(mock_ddb_client)
     result = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
-    assert result == {"name": "Alice"}
+    assert result["status"] == "ok"
+    assert result["pk"] == "pk1"
+    assert result["table"] == "my_table"
+    assert result["data"] == {"name": "Alice"}
     assert ddb.rows is result
 
 
@@ -33,7 +36,10 @@ def test_fetch_by_pk_not_found(mock_ddb_client):
     mock_ddb_client.get_item.return_value = {}
     ddb = make_ddb(mock_ddb_client)
     result = ddb.fetch_by_pk("my_table", "missing", key_name="id", key_type="S")
-    assert result == {"not_found": True}
+    assert result["status"] == "not_found"
+    assert result["pk"] == "missing"
+    assert result["table"] == "my_table"
+    assert result["data"] is None
 
 
 def test_fetch_by_pk_not_found_with_fields(mock_ddb_client):
@@ -42,7 +48,8 @@ def test_fetch_by_pk_not_found_with_fields(mock_ddb_client):
     result = ddb.fetch_by_pk(
         "my_table", "missing", key_name="id", key_type="S", fields={"name": "S"}
     )
-    assert result == {"name": "not found"}
+    assert result["status"] == "not_found"
+    assert result["data"] is None
 
 
 def test_fetch_by_pk_with_fields(mock_ddb_client):
@@ -53,14 +60,19 @@ def test_fetch_by_pk_with_fields(mock_ddb_client):
     result = ddb.fetch_by_pk(
         "my_table", "pk1", key_name="id", key_type="S", fields={"name": "S"}
     )
-    assert result == {"name": "Alice"}
+    assert result["status"] == "ok"
+    assert result["data"] == {"name": "Alice"}
 
 
-def test_fetch_by_pk_raises_on_client_error(mock_ddb_client):
+def test_fetch_by_pk_error_on_client_error(mock_ddb_client):
     mock_ddb_client.get_item.side_effect = _client_error("AccessDeniedException")
     ddb = make_ddb(mock_ddb_client)
-    with pytest.raises(RuntimeError, match="DynamoDB get_item failed"):
-        ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
+    result = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
+    assert result["status"] == "error"
+    assert result["pk"] == "pk1"
+    assert result["table"] == "my_table"
+    assert result["data"] is None
+    assert "DynamoDB get_item failed" in result["message"]
 
 
 # --- batch_fetch_by_pk ---
@@ -78,8 +90,12 @@ def test_batch_fetch_by_pk_happy(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     result = ddb.batch_fetch_by_pk("my_table", ["pk1", "pk2"], key_name="id", key_type="S")
 
-    assert result["my_table"]["pk1"] == {"name": "Alice"}
-    assert result["my_table"]["pk2"] == {"not_found": True}
+    assert result["my_table"]["pk1"]["status"] == "ok"
+    assert result["my_table"]["pk1"]["pk"] == "pk1"
+    assert result["my_table"]["pk1"]["table"] == "my_table"
+    assert result["my_table"]["pk1"]["data"] == {"name": "Alice"}
+    assert result["my_table"]["pk2"]["status"] == "not_found"
+    assert result["my_table"]["pk2"]["data"] is None
     assert ddb.rows is result
 
 
@@ -96,7 +112,8 @@ def test_batch_fetch_by_pk_with_fields(mock_ddb_client):
     result = ddb.batch_fetch_by_pk(
         "my_table", ["pk1"], key_name="id", key_type="S", fields={"name": "S"}
     )
-    assert result["my_table"]["pk1"] == {"name": "Alice"}
+    assert result["my_table"]["pk1"]["status"] == "ok"
+    assert result["my_table"]["pk1"]["data"] == {"name": "Alice"}
 
 
 def test_batch_fetch_by_pk_chunks_at_100(mock_ddb_client):
@@ -116,7 +133,7 @@ def test_batch_fetch_by_pk_chunks_at_100(mock_ddb_client):
     ]["my_table"]["Keys"]
     assert len(first_keys) == 100
     assert len(second_keys) == 1
-    assert all(result["my_table"][pk] == {"not_found": True} for pk in pks)
+    assert all(result["my_table"][pk]["status"] == "not_found" for pk in pks)
 
 
 def test_batch_fetch_by_pk_threaded(mock_ddb_client):
@@ -133,7 +150,7 @@ def test_batch_fetch_by_pk_threaded(mock_ddb_client):
         workers=3, dynamodb=mock_ddb_client,
     )
     assert mock_ddb_client.batch_get_item.call_count == 3
-    assert all(result["my_table"][pk] != {"not_found": True} for pk in pks)
+    assert all(result["my_table"][pk]["status"] == "ok" for pk in pks)
     assert ddb.rows is result
 
 
@@ -150,8 +167,11 @@ def test_batch_fetch_by_pk_error_in_chunk_returns_partial(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     pks = [f"pk{i}" for i in range(101)]
     result = ddb.batch_fetch_by_pk("my_table", pks, key_name="id", key_type="S")
-    assert result["my_table"]["pk0"]["val"] == "0"
-    assert result["my_table"]["pk100"] == {"error": "Access denied"}
+    assert result["my_table"]["pk0"]["status"] == "ok"
+    assert result["my_table"]["pk0"]["data"]["val"] == "0"
+    assert result["my_table"]["pk100"]["status"] == "error"
+    assert result["my_table"]["pk100"]["message"] == "Access denied"
+    assert result["my_table"]["pk100"]["data"] is None
 
 
 # --- update_by_pk ---
