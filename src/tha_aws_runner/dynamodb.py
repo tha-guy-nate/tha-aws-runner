@@ -152,138 +152,159 @@ class ThaDdb(AWSBase):
 
     def batch_fetch_by_pk(
         self,
-        table_name: str,
-        partition_keys: list[str],
+        rows: list[dict],
+        pk_col: str,
         *,
-        fields: dict[str, str] | None = None,
+        table_name: str | None = None,
+        table_name_col: str | None = None,
         key_name: str | None = None,
         key_type: str | None = None,
+        fields: dict[str, str] | None = None,
         workers: int = 1,
         dynamodb: Any = None,
     ) -> dict[str, dict[str, dict]]:
+        if (table_name is None) == (table_name_col is None):
+            raise ValueError("Provide exactly one of table_name or table_name_col")
+
         MAX_BATCH_GET = 100
         MAX_RETRIES = 2
 
-        found_ids: set[str] = set()
-        records_dict: dict[str, dict] = {}
+        seen: dict[tuple[str, str], None] = {}
+        for row in rows:
+            tbl = table_name if table_name else str(row.get(table_name_col) or "")
+            pk = str(row.get(pk_col) or "")
+            if tbl and pk:
+                seen[(tbl, pk)] = None
+        unique_pairs = list(seen.keys())
 
-        all_keys = [{key_name: {key_type: pk}} for pk in partition_keys]
-        chunks = [all_keys[i : i + MAX_BATCH_GET] for i in range(0, len(all_keys), MAX_BATCH_GET)]
+        def _make_request(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+            req: dict[str, Any] = {}
+            for tbl, pk in pairs:
+                req.setdefault(tbl, {"Keys": []})["Keys"].append({key_name: {key_type: pk}})
+            return req
 
-        def _process_chunk(chunk: list[dict], client: Any) -> tuple[dict, set]:
-            local_records: dict[str, dict] = {}
-            local_found: set[str] = set()
-            chunk_pks = [key[key_name][key_type] for key in chunk]  # type: ignore[index]
+        records_dict: dict[str, dict[str, dict]] = {}
+        found_ids: set[tuple[str, str]] = set()
+        chunks = [
+            unique_pairs[i : i + MAX_BATCH_GET]
+            for i in range(0, len(unique_pairs), MAX_BATCH_GET)
+        ]
 
-            def _absorb(items: list[dict]) -> None:
+        def _absorb(
+            responses: dict[str, list[dict]],
+            local_records: dict[str, dict[str, dict]],
+            local_found: set[tuple[str, str]],
+        ) -> None:
+            for tbl, items in responses.items():
                 for item in items:
-                    pk_value = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
-                    if pk_value is None:
+                    pk_val = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
+                    if pk_val is None:
                         continue
-                    local_found.add(pk_value)
+                    local_found.add((tbl, pk_val))
                     if fields is None:
                         data = {k: _extract_any(v) for k, v in item.items() if k != key_name}
                     else:
                         data = {
-                            field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
-                            for field, expected_type in fields.items()
+                            f: _extract_typed(item.get(f), t)  # type: ignore[arg-type]
+                            for f, t in fields.items()
                         }
-                    local_records[pk_value] = {
+                    local_records.setdefault(tbl, {})[pk_val] = {
                         "status": None,
                         "message": None,
-                        "pk": pk_value,
-                        "table": table_name,
+                        "pk": pk_val,
+                        "table": tbl,
                         "data": data,
                     }
 
+        def _process_chunk(
+            chunk_pairs: list[tuple[str, str]], client: Any
+        ) -> tuple[dict[str, dict[str, dict]], set[tuple[str, str]]]:
+            local_records: dict[str, dict[str, dict]] = {}
+            local_found: set[tuple[str, str]] = set()
+
             try:
-                response = client.batch_get_item(RequestItems={table_name: {"Keys": chunk}})
+                response = client.batch_get_item(RequestItems=_make_request(chunk_pairs))
             except ClientError as e:
                 msg = e.response["Error"]["Message"]
-                for pk in chunk_pks:
-                    local_found.add(pk)
-                    local_records[pk] = {
-                        "status": "error",
-                        "message": msg,
-                        "pk": pk,
-                        "table": table_name,
-                        "data": None,
+                for tbl, pk in chunk_pairs:
+                    local_found.add((tbl, pk))
+                    local_records.setdefault(tbl, {})[pk] = {
+                        "status": "error", "message": msg,
+                        "pk": pk, "table": tbl, "data": None,
                     }
                 return local_records, local_found
 
-            _absorb(response.get("Responses", {}).get(table_name, []))
+            _absorb(response.get("Responses", {}), local_records, local_found)
             unprocessed = response.get("UnprocessedKeys", {})
             retries = 0
+
             while unprocessed and retries < MAX_RETRIES:
                 time.sleep(0.5 * (2**retries))
-                unprocessed_pks = [
-                    key[key_name][key_type]  # type: ignore[index]
-                    for key in unprocessed.get(table_name, {}).get("Keys", [])
+                unprocessed_pairs = [
+                    (tbl, key[key_name][key_type])  # type: ignore[index]
+                    for tbl, tbl_data in unprocessed.items()
+                    for key in tbl_data.get("Keys", [])
                 ]
                 try:
                     response = client.batch_get_item(RequestItems=unprocessed)
                 except ClientError as e:
                     retry_msg = e.response["Error"]["Message"]
-                    for pk in unprocessed_pks:
-                        local_found.add(pk)
-                        local_records[pk] = {
-                            "status": "error",
-                            "message": retry_msg,
-                            "pk": pk,
-                            "table": table_name,
-                            "data": None,
+                    for tbl, pk in unprocessed_pairs:
+                        local_found.add((tbl, pk))
+                        local_records.setdefault(tbl, {})[pk] = {
+                            "status": "error", "message": retry_msg,
+                            "pk": pk, "table": tbl, "data": None,
                         }
                     return local_records, local_found
-                _absorb(response.get("Responses", {}).get(table_name, []))
+                _absorb(response.get("Responses", {}), local_records, local_found)
                 unprocessed = response.get("UnprocessedKeys", {})
                 retries += 1
 
             if unprocessed:
-                remaining_pks = [
-                    key[key_name][key_type]  # type: ignore[index]
-                    for key in unprocessed.get(table_name, {}).get("Keys", [])
-                ]
-                for pk in remaining_pks:
-                    local_found.add(pk)
-                    local_records[pk] = {
-                        "status": "error",
-                        "message": f"Unprocessed after {retries} retries",
-                        "pk": pk,
-                        "table": table_name,
-                        "data": None,
-                    }
+                for tbl, tbl_data in unprocessed.items():
+                    for key in tbl_data.get("Keys", []):
+                        pk = key[key_name][key_type]  # type: ignore[index]
+                        local_found.add((tbl, pk))
+                        local_records.setdefault(tbl, {})[pk] = {
+                            "status": "error",
+                            "message": f"Unprocessed after {retries} retries",
+                            "pk": pk, "table": tbl, "data": None,
+                        }
 
             return local_records, local_found
 
+        def _merge(
+            local_records: dict[str, dict[str, dict]], local_found: set[tuple[str, str]]
+        ) -> None:
+            for tbl, tbl_records in local_records.items():
+                records_dict.setdefault(tbl, {}).update(tbl_records)
+            found_ids.update(local_found)
+
         if workers > 1:
-            def _threaded(chunk: list[dict]) -> tuple[dict, set]:
+            def _threaded(
+                chunk_pairs: list[tuple[str, str]],
+            ) -> tuple[dict[str, dict[str, dict]], set[tuple[str, str]]]:
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                return _process_chunk(chunk, client)
+                return _process_chunk(chunk_pairs, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for local_records, local_found in pool.map(_threaded, chunks):
-                    records_dict.update(local_records)
-                    found_ids.update(local_found)
+                for lr, lf in pool.map(_threaded, chunks):
+                    _merge(lr, lf)
         else:
             client = self._client(dynamodb)
             for chunk in chunks:
-                local_records, local_found = _process_chunk(chunk, client)
-                records_dict.update(local_records)
-                found_ids.update(local_found)
+                _merge(*_process_chunk(chunk, client))
 
-        for pk in partition_keys:
-            if pk not in found_ids:
-                records_dict[pk] = {
+        for tbl, pk in unique_pairs:
+            if (tbl, pk) not in found_ids:
+                records_dict.setdefault(tbl, {})[pk] = {
                     "status": "error",
                     "message": "Item not found",
-                    "pk": pk,
-                    "table": table_name,
-                    "data": None,
+                    "pk": pk, "table": tbl, "data": None,
                 }
 
-        result = {table_name: records_dict}
-        self.rows = result
-        return result
+        self.rows = records_dict
+        return records_dict
 
     def update_by_pk(
         self,
