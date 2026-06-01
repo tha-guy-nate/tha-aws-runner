@@ -21,9 +21,14 @@ record = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
 # {"status": None, "message": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}}
 
 # DynamoDB — batch fetch by partition key (uses batch_get_item, chunks at 100)
-records = ddb.batch_fetch_by_pk("my_table", ["pk1", "pk2"], key_name="id", key_type="S")
+rows = [{"id": "pk1"}, {"id": "pk2"}]
+records = ddb.batch_fetch_by_pk(rows, pk_col="id", table_name="my_table", key_name="id", key_type="S")
 # {"my_table": {"pk1": {"status": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}},
 #               "pk2": {"status": "error", "pk": "pk2", "table": "my_table", "data": None}}}
+
+# DynamoDB — multi-table batch fetch (table name comes from each row)
+rows = [{"id": "pk1", "tbl": "orders"}, {"id": "pk2", "tbl": "users"}]
+records = ddb.batch_fetch_by_pk(rows, pk_col="id", table_name_col="tbl", key_name="id", key_type="S")
 
 # DynamoDB — update a single attribute (commit=True required to execute)
 result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
@@ -57,7 +62,7 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 | Method | Description |
 |--------|-------------|
 | `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). |
-| `batch_fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Returns `{table_name: {pk: {status, message, pk, table, data}}}`. Each record's `status` is `None` (item found) or `"error"` (item missing or AWS error). Chunk-level AWS errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return their data. Pass `workers>1` to parallelize chunks across threads. |
+| `batch_fetch_by_pk(rows, pk_col, *, table_name=None, table_name_col=None, key_name=None, key_type=None, fields=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Each row must have `pk_col`. Provide exactly one of `table_name` (single table) or `table_name_col` (per-row table). Returns `{table: {pk: {status, message, pk, table, data}}}`. `status` is `None` (found) or `"error"` (missing or AWS error). Duplicate PKs are deduplicated before the fetch. Chunk-level errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return data. Pass `workers>1` to parallelize chunks across threads. |
 | `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, commit=False, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, `error`, or `dry_run`. |
 | `batch_update_by_pk(table_name, rows, pk_col, key_name, key_type, update_attr, update_type, value_col, *, increment_attr=None, workers=1, commit=False, dynamodb=None)` | Update an attribute for each row in a list. Wraps `update_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
 | `batch_delete_by_pk(table_name, rows, pk_col, key_name, key_type, *, workers=1, commit=False, dynamodb=None)` | Delete an item for each row in a list. Wraps `delete_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
@@ -80,7 +85,8 @@ ThaS3(*, status_cb=None, mode="app", region=None, profile=None)
 | `list_files(bucket, prefix="", *, s3=None)` | List all object keys in a bucket under an optional prefix. Returns a `list[str]` of keys. Paginates automatically. |
 | `delete_file(bucket=None, key=None, *, uri=None, commit=False, s3=None)` | Delete an S3 object. Provide `uri` or both `bucket`+`key`. Returns `{"bucket", "key", "status"}`. |
 | `download_file(bucket=None, key=None, *, uri=None, local_path=None, encoding=None, s3=None)` | Download an S3 object. Provide `uri` or both `bucket`+`key`. Without `local_path`, returns data in `result["data"]` as `str` (if `encoding` set) or `bytes`. With `local_path`, writes raw bytes to disk. Returns `{"bucket", "key", "status", "bytes"}`. |
-| `batch_download(bucket=None, keys=None, *, uris=None, local_dir=None, encoding=None, workers=1, s3=None)` | Download multiple S3 objects. Provide `uris` (list of S3 URIs) or `bucket` with optional `keys` (omit `keys` to download all objects in the bucket). With `local_dir`, files are written to disk preserving the key path structure. Pass `workers>1` to parallelize. Returns a `list[dict]` of per-file results; failed files get `{"status": "error", "message": msg}` rather than raising. |
+| `download_prefix(bucket, prefix="", *, local_dir=None, encoding=None, workers=1, s3=None)` | Download all objects under a prefix (lists then batch-downloads). Equivalent to `aws s3 cp --recursive`. With `local_dir`, files are written to disk preserving the key path structure. Returns a `list[dict]` of per-file results. |
+| `batch_download(rows, *, uri_col=None, key_col=None, bucket=None, bucket_col=None, local_dir=None, encoding=None, workers=1, s3=None)` | Download multiple S3 objects from a list of rows. Three modes: (1) `uri_col` — full `s3://` URI per row; (2) `key_col + bucket` — fixed bucket for all rows; (3) `key_col + bucket_col` — per-row bucket. With `local_dir`, files are written to disk preserving the key path structure. Pass `workers>1` to parallelize. Returns a `list[dict]` of per-file results; invalid URIs and download failures are captured per-row as `{"status": "error", "message": msg}` rather than raising. |
 
 ### `ThaSSM`
 
