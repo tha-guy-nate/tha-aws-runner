@@ -206,7 +206,7 @@ class ThaS3(AWSBase):
                     b, k, local_path=local_path, encoding=encoding, s3=client
                 )
             except Exception as exc:
-                results[idx] = {"bucket": b, "key": k, "status": "error", "error": str(exc)}
+                results[idx] = {"bucket": b, "key": k, "status": "error", "message": str(exc)}
 
         if workers > 1:
             def _threaded(args: tuple[int, tuple[str, str]]) -> None:

@@ -314,7 +314,7 @@ def test_batch_download_error_captured_per_file(mock_s3_client):
     result = s3.batch_download("my-bucket", ["good.csv", "bad.csv"])
     assert result[0]["status"] == "downloaded"
     assert result[1]["status"] == "error"
-    assert "S3 error" in result[1]["error"]
+    assert "S3 error" in result[1]["message"]
 
 
 def test_batch_download_threaded(mock_s3_client):
