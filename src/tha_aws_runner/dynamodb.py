@@ -6,6 +6,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.errors import AwsError
 
 _THROTTLE_CODES = frozenset({
     "ProvisionedThroughputExceededException",
@@ -88,9 +89,10 @@ class ThaDdb(AWSBase):
     def _client(self, dynamodb: Any = None) -> Any:
         if dynamodb is not None:
             return dynamodb
-        if self._dynamodb is None:
-            self._dynamodb = self.clients.dynamodb()
-        return self._dynamodb
+        with self._client_lock:
+            if self._dynamodb is None:
+                self._dynamodb = self.clients.dynamodb()
+            return self._dynamodb
 
     def fetch_by_pk(
         self,
@@ -165,46 +167,50 @@ class ThaDdb(AWSBase):
         found_ids: set[str] = set()
         records_dict: dict[str, dict] = {}
 
-        def _absorb(items: list[dict]) -> None:
-            for item in items:
-                pk_value = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
-                if pk_value is None:
-                    continue
-                found_ids.add(pk_value)
-                if fields is None:
-                    data = {k: _extract_any(v) for k, v in item.items() if k != key_name}
-                else:
-                    data = {
-                        field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
-                        for field, expected_type in fields.items()
-                    }
-                records_dict[pk_value] = {
-                    "status": "ok",
-                    "message": None,
-                    "pk": pk_value,
-                    "table": table_name,
-                    "data": data,
-                }
-
         all_keys = [{key_name: {key_type: pk}} for pk in partition_keys]
         chunks = [all_keys[i : i + MAX_BATCH_GET] for i in range(0, len(all_keys), MAX_BATCH_GET)]
 
-        def _process_chunk(chunk: list[dict], client: Any) -> None:
+        def _process_chunk(chunk: list[dict], client: Any) -> tuple[dict, set]:
+            local_records: dict[str, dict] = {}
+            local_found: set[str] = set()
             chunk_pks = [key[key_name][key_type] for key in chunk]  # type: ignore[index]
+
+            def _absorb(items: list[dict]) -> None:
+                for item in items:
+                    pk_value = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
+                    if pk_value is None:
+                        continue
+                    local_found.add(pk_value)
+                    if fields is None:
+                        data = {k: _extract_any(v) for k, v in item.items() if k != key_name}
+                    else:
+                        data = {
+                            field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                            for field, expected_type in fields.items()
+                        }
+                    local_records[pk_value] = {
+                        "status": "ok",
+                        "message": None,
+                        "pk": pk_value,
+                        "table": table_name,
+                        "data": data,
+                    }
+
             try:
                 response = client.batch_get_item(RequestItems={table_name: {"Keys": chunk}})
             except ClientError as e:
                 msg = e.response["Error"]["Message"]
                 for pk in chunk_pks:
-                    found_ids.add(pk)
-                    records_dict[pk] = {
+                    local_found.add(pk)
+                    local_records[pk] = {
                         "status": "error",
                         "message": msg,
                         "pk": pk,
                         "table": table_name,
                         "data": None,
                     }
-                return
+                return local_records, local_found
+
             _absorb(response.get("Responses", {}).get(table_name, []))
             unprocessed = response.get("UnprocessedKeys", {})
             retries = 0
@@ -219,26 +225,27 @@ class ThaDdb(AWSBase):
                 except ClientError as e:
                     retry_msg = e.response["Error"]["Message"]
                     for pk in unprocessed_pks:
-                        found_ids.add(pk)
-                        records_dict[pk] = {
+                        local_found.add(pk)
+                        local_records[pk] = {
                             "status": "error",
                             "message": retry_msg,
                             "pk": pk,
                             "table": table_name,
                             "data": None,
                         }
-                    return
+                    return local_records, local_found
                 _absorb(response.get("Responses", {}).get(table_name, []))
                 unprocessed = response.get("UnprocessedKeys", {})
                 retries += 1
+
             if unprocessed:
                 remaining_pks = [
                     key[key_name][key_type]  # type: ignore[index]
                     for key in unprocessed.get(table_name, {}).get("Keys", [])
                 ]
                 for pk in remaining_pks:
-                    found_ids.add(pk)
-                    records_dict[pk] = {
+                    local_found.add(pk)
+                    local_records[pk] = {
                         "status": "error",
                         "message": f"Unprocessed after {retries} retries",
                         "pk": pk,
@@ -246,17 +253,23 @@ class ThaDdb(AWSBase):
                         "data": None,
                     }
 
+            return local_records, local_found
+
         if workers > 1:
-            def _threaded(chunk: list[dict]) -> None:
+            def _threaded(chunk: list[dict]) -> tuple[dict, set]:
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                _process_chunk(chunk, client)
+                return _process_chunk(chunk, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_threaded, chunks))
+                for local_records, local_found in pool.map(_threaded, chunks):
+                    records_dict.update(local_records)
+                    found_ids.update(local_found)
         else:
             client = self._client(dynamodb)
             for chunk in chunks:
-                _process_chunk(chunk, client)
+                local_records, local_found = _process_chunk(chunk, client)
+                records_dict.update(local_records)
+                found_ids.update(local_found)
 
         for pk in partition_keys:
             if pk not in found_ids:
@@ -285,6 +298,7 @@ class ThaDdb(AWSBase):
         increment_attr: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
+        _set_rows: bool = True,
     ) -> dict:
         dynamodb = self._client(dynamodb)
 
@@ -295,7 +309,8 @@ class ThaDdb(AWSBase):
 
         if not commit:
             result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
-            self.rows = result
+            if _set_rows:
+                self.rows = result
             return result
 
         expr_attr_names: dict[str, str] = {"#U": update_attr}
@@ -327,7 +342,8 @@ class ThaDdb(AWSBase):
                     ReturnValues="ALL_OLD",
                 )
                 result = {"pk": partition_key, "status": "updated", "old": resp.get("Attributes")}
-                self.rows = result
+                if _set_rows:
+                    self.rows = result
                 return result
 
             except ClientError as e:
@@ -344,23 +360,27 @@ class ThaDdb(AWSBase):
                         ),
                         "old": None,
                     }
-                    self.rows = result
+                    if _set_rows:
+                        self.rows = result
                     return result
 
                 if _is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
-                        self.rows = result
+                        if _set_rows:
+                            self.rows = result
                         return result
                     time.sleep(RETRY_BACKOFF * (2**attempt))
                     continue
 
                 result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}
-                self.rows = result
+                if _set_rows:
+                    self.rows = result
                 return result
 
         result = {"pk": partition_key, "status": "error", "message": "Max retries exceeded"}
-        self.rows = result
+        if _set_rows:
+            self.rows = result
         return result
 
     def batch_update_by_pk(
@@ -389,7 +409,7 @@ class ThaDdb(AWSBase):
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
                     table_name, pk, key_name, key_type, update_attr, update_type, val,
-                    increment_attr=increment_attr, commit=commit, dynamodb=client,
+                    increment_attr=increment_attr, commit=commit, dynamodb=client, _set_rows=False,
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -401,6 +421,7 @@ class ThaDdb(AWSBase):
                 results[idx] = self.update_by_pk(
                     table_name, pk, key_name, key_type, update_attr, update_type, val,
                     increment_attr=increment_attr, commit=commit, dynamodb=dynamodb,
+                    _set_rows=False,
                 )
 
         self.rows = results
@@ -427,6 +448,7 @@ class ThaDdb(AWSBase):
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
                     table_name, pk, key_name, key_type, commit=commit, dynamodb=client,
+                    _set_rows=False,
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -436,6 +458,7 @@ class ThaDdb(AWSBase):
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
                     table_name, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
+                    _set_rows=False,
                 )
 
         self.rows = results
@@ -474,7 +497,7 @@ class ThaDdb(AWSBase):
                 try:
                     response = dynamodb.batch_write_item(RequestItems={table_name: chunk})
                 except ClientError as e:
-                    raise RuntimeError(
+                    raise AwsError(
                         f"DynamoDB batch write failed: {e.response['Error']['Message']}"
                     ) from e
 
@@ -486,7 +509,7 @@ class ThaDdb(AWSBase):
             retries += 1
 
         if unprocessed:
-            raise RuntimeError(
+            raise AwsError(
                 f"Unprocessed write requests remain after {retries} retries: {unprocessed}"
             )
 
@@ -503,12 +526,14 @@ class ThaDdb(AWSBase):
         *,
         commit: bool = False,
         dynamodb: Any = None,
+        _set_rows: bool = True,
     ) -> dict:
         dynamodb = self._client(dynamodb)
 
         if not commit:
             result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
-            self.rows = result
+            if _set_rows:
+                self.rows = result
             return result
 
         MAX_RETRIES = 2
@@ -524,7 +549,8 @@ class ThaDdb(AWSBase):
                     ExpressionAttributeNames={"#K": key_name},
                 )
                 result = {"pk": partition_key, "status": "deleted"}
-                self.rows = result
+                if _set_rows:
+                    self.rows = result
                 return result
 
             except ClientError as e:
@@ -533,21 +559,25 @@ class ThaDdb(AWSBase):
 
                 if code == "ConditionalCheckFailedException":
                     result = {"pk": partition_key, "status": "skipped", "message": "Item does not exist"}  # noqa: E501
-                    self.rows = result
+                    if _set_rows:
+                        self.rows = result
                     return result
 
                 if _is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
-                        self.rows = result
+                        if _set_rows:
+                            self.rows = result
                         return result
                     time.sleep(RETRY_BACKOFF * (2**attempt))
                     continue
 
                 result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}
-                self.rows = result
+                if _set_rows:
+                    self.rows = result
                 return result
 
         result = {"pk": partition_key, "status": "error", "message": "Max retries exceeded"}
-        self.rows = result
+        if _set_rows:
+            self.rows = result
         return result

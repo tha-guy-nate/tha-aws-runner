@@ -19,9 +19,10 @@ class ThaSSM(AWSBase):
     def _client(self, ssm: Any = None) -> Any:
         if ssm is not None:
             return ssm
-        if self._ssm is None:
-            self._ssm = self.clients.ssm()
-        return self._ssm
+        with self._client_lock:
+            if self._ssm is None:
+                self._ssm = self.clients.ssm()
+            return self._ssm
 
     def read_param(
         self,
