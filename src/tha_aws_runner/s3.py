@@ -39,9 +39,10 @@ class ThaS3(AWSBase):
     def _client(self, s3: Any = None) -> Any:
         if s3 is not None:
             return s3
-        if self._s3 is None:
-            self._s3 = self.clients.s3()
-        return self._s3
+        with self._client_lock:
+            if self._s3 is None:
+                self._s3 = self.clients.s3()
+            return self._s3
 
     def upload_file(
         self,

@@ -140,6 +140,7 @@ class AWSBase:
         self._profile = profile
         self.clients = AWSClients(region=region, profile=profile)
         self._thread_local = threading.local()
+        self._client_lock = threading.Lock()
         self.rows: Any = None
 
     def _thread_clients(self) -> AWSClients:
