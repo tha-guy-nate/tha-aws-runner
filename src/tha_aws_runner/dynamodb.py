@@ -122,7 +122,7 @@ class ThaDdb(AWSBase):
         item = response.get("Item")
         if item is None:
             result = {
-                "status": "not_found",
+                "status": "error",
                 "message": "Item not found",
                 "pk": partition_key,
                 "table": table_name,
@@ -130,7 +130,7 @@ class ThaDdb(AWSBase):
             }
         elif fields is None:
             result = {
-                "status": "ok",
+                "status": None,
                 "message": None,
                 "pk": partition_key,
                 "table": table_name,
@@ -138,7 +138,7 @@ class ThaDdb(AWSBase):
             }
         else:
             result = {
-                "status": "ok",
+                "status": None,
                 "message": None,
                 "pk": partition_key,
                 "table": table_name,
@@ -189,7 +189,7 @@ class ThaDdb(AWSBase):
                             for field, expected_type in fields.items()
                         }
                     local_records[pk_value] = {
-                        "status": "ok",
+                        "status": None,
                         "message": None,
                         "pk": pk_value,
                         "table": table_name,
@@ -274,7 +274,7 @@ class ThaDdb(AWSBase):
         for pk in partition_keys:
             if pk not in found_ids:
                 records_dict[pk] = {
-                    "status": "not_found",
+                    "status": "error",
                     "message": "Item not found",
                     "pk": pk,
                     "table": table_name,
