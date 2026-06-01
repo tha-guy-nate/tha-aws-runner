@@ -88,7 +88,8 @@ def test_batch_fetch_by_pk_happy(mock_ddb_client):
         "UnprocessedKeys": {},
     }
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.batch_fetch_by_pk("my_table", ["pk1", "pk2"], key_name="id", key_type="S")
+    rows = [{"ref": "pk1"}, {"ref": "pk2"}]
+    result = ddb.batch_fetch_by_pk(rows, "ref", table_name="my_table", key_name="id", key_type="S")
 
     assert result["my_table"]["pk1"]["status"] is None
     assert result["my_table"]["pk1"]["pk"] == "pk1"
@@ -110,7 +111,8 @@ def test_batch_fetch_by_pk_with_fields(mock_ddb_client):
     }
     ddb = make_ddb(mock_ddb_client)
     result = ddb.batch_fetch_by_pk(
-        "my_table", ["pk1"], key_name="id", key_type="S", fields={"name": "S"}
+        [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S",
+        fields={"name": "S"},
     )
     assert result["my_table"]["pk1"]["status"] is None
     assert result["my_table"]["pk1"]["data"] == {"name": "Alice"}
@@ -122,8 +124,8 @@ def test_batch_fetch_by_pk_chunks_at_100(mock_ddb_client):
         "UnprocessedKeys": {},
     }
     ddb = make_ddb(mock_ddb_client)
-    pks = [f"pk{i}" for i in range(101)]
-    result = ddb.batch_fetch_by_pk("my_table", pks, key_name="id", key_type="S")
+    rows = [{"ref": f"pk{i}"} for i in range(101)]
+    result = ddb.batch_fetch_by_pk(rows, "ref", table_name="my_table", key_name="id", key_type="S")
     assert mock_ddb_client.batch_get_item.call_count == 2
     first_keys = mock_ddb_client.batch_get_item.call_args_list[0].kwargs[
         "RequestItems"
@@ -133,7 +135,7 @@ def test_batch_fetch_by_pk_chunks_at_100(mock_ddb_client):
     ]["my_table"]["Keys"]
     assert len(first_keys) == 100
     assert len(second_keys) == 1
-    assert all(result["my_table"][pk]["status"] == "error" for pk in pks)
+    assert all(result["my_table"][f"pk{i}"]["status"] == "error" for i in range(101))
 
 
 def test_batch_fetch_by_pk_threaded(mock_ddb_client):
@@ -144,18 +146,17 @@ def test_batch_fetch_by_pk_threaded(mock_ddb_client):
         "UnprocessedKeys": {},
     }
     ddb = make_ddb(mock_ddb_client)
-    pks = [f"pk{i}" for i in range(201)]
+    rows = [{"ref": f"pk{i}"} for i in range(201)]
     result = ddb.batch_fetch_by_pk(
-        "my_table", pks, key_name="id", key_type="S",
+        rows, "ref", table_name="my_table", key_name="id", key_type="S",
         workers=3, dynamodb=mock_ddb_client,
     )
     assert mock_ddb_client.batch_get_item.call_count == 3
-    assert all(result["my_table"][pk]["status"] is None for pk in pks)
+    assert all(result["my_table"][f"pk{i}"]["status"] is None for i in range(201))
     assert ddb.rows is result
 
 
 def test_batch_fetch_by_pk_error_in_chunk_returns_partial(mock_ddb_client):
-    # chunk 1 succeeds, chunk 2 fails — chunk 1 data should still be returned
     def _side_effect(**kwargs):
         keys = kwargs["RequestItems"]["my_table"]["Keys"]
         if len(keys) == 100:
@@ -165,13 +166,64 @@ def test_batch_fetch_by_pk_error_in_chunk_returns_partial(mock_ddb_client):
 
     mock_ddb_client.batch_get_item.side_effect = _side_effect
     ddb = make_ddb(mock_ddb_client)
-    pks = [f"pk{i}" for i in range(101)]
-    result = ddb.batch_fetch_by_pk("my_table", pks, key_name="id", key_type="S")
+    rows = [{"ref": f"pk{i}"} for i in range(101)]
+    result = ddb.batch_fetch_by_pk(rows, "ref", table_name="my_table", key_name="id", key_type="S")
     assert result["my_table"]["pk0"]["status"] is None
     assert result["my_table"]["pk0"]["data"]["val"] == "0"
     assert result["my_table"]["pk100"]["status"] == "error"
     assert result["my_table"]["pk100"]["message"] == "Access denied"
     assert result["my_table"]["pk100"]["data"] is None
+
+
+def test_batch_fetch_by_pk_multi_table(mock_ddb_client):
+    mock_ddb_client.batch_get_item.return_value = {
+        "Responses": {
+            "users": [{"id": {"S": "u1"}, "name": {"S": "Alice"}}],
+            "orders": [{"id": {"S": "o1"}, "total": {"N": "42"}}],
+        },
+        "UnprocessedKeys": {},
+    }
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"ref": "u1", "tbl": "users"},
+        {"ref": "o1", "tbl": "orders"},
+        {"ref": "u99", "tbl": "users"},
+    ]
+    result = ddb.batch_fetch_by_pk(rows, "ref", table_name_col="tbl", key_name="id", key_type="S")
+
+    assert result["users"]["u1"]["status"] is None
+    assert result["users"]["u1"]["data"] == {"name": "Alice"}
+    assert result["orders"]["o1"]["status"] is None
+    assert result["orders"]["o1"]["data"] == {"total": "42"}
+    assert result["users"]["u99"]["status"] == "error"
+    assert result["users"]["u99"]["message"] == "Item not found"
+
+    call_args = mock_ddb_client.batch_get_item.call_args.kwargs["RequestItems"]
+    assert set(call_args.keys()) == {"users", "orders"}
+
+
+def test_batch_fetch_by_pk_deduplicates_rows(mock_ddb_client):
+    mock_ddb_client.batch_get_item.return_value = {
+        "Responses": {"my_table": [{"id": {"S": "pk1"}, "name": {"S": "Alice"}}]},
+        "UnprocessedKeys": {},
+    }
+    ddb = make_ddb(mock_ddb_client)
+    rows = [{"ref": "pk1"}, {"ref": "pk1"}, {"ref": "pk1"}]
+    result = ddb.batch_fetch_by_pk(rows, "ref", table_name="my_table", key_name="id", key_type="S")
+    assert mock_ddb_client.batch_get_item.call_count == 1
+    keys_sent = mock_ddb_client.batch_get_item.call_args.kwargs["RequestItems"]["my_table"]["Keys"]
+    assert len(keys_sent) == 1
+    assert result["my_table"]["pk1"]["status"] is None
+
+
+def test_batch_fetch_by_pk_requires_exactly_one_table_arg(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    with pytest.raises(ValueError, match="exactly one"):
+        ddb.batch_fetch_by_pk([], "ref", key_name="id", key_type="S")
+    with pytest.raises(ValueError, match="exactly one"):
+        ddb.batch_fetch_by_pk(
+            [], "ref", table_name="t", table_name_col="col", key_name="id", key_type="S"
+        )
 
 
 # --- update_by_pk ---

@@ -174,29 +174,58 @@ class ThaS3(AWSBase):
         self.rows = result
         return result
 
-    def batch_download(
+    def download_prefix(
         self,
-        bucket: str | None = None,
-        keys: list[str] | None = None,
+        bucket: str,
+        prefix: str = "",
         *,
-        uris: list[str] | None = None,
         local_dir: str | None = None,
         encoding: str | None = None,
         workers: int = 1,
         s3: Any = None,
     ) -> list[dict]:
-        pairs: list[tuple[str, str]]
-        if uris is not None:
-            pairs = [_parse_s3_uri(u) for u in uris]
-        elif bucket is not None:
-            resolved_keys = keys if keys is not None else self.list_files(bucket, s3=s3)
-            pairs = [(bucket, k) for k in resolved_keys]
-        else:
-            raise ValueError("Provide uris or bucket")
+        keys = self.list_files(bucket, prefix, s3=s3)
+        rows = [{"key": k} for k in keys]
+        return self.batch_download(
+            rows, key_col="key", bucket=bucket,
+            local_dir=local_dir, encoding=encoding, workers=workers, s3=s3,
+        )
 
-        results: list[dict] = [{}] * len(pairs)
+    def batch_download(
+        self,
+        rows: list[dict],
+        *,
+        uri_col: str | None = None,
+        key_col: str | None = None,
+        bucket: str | None = None,
+        bucket_col: str | None = None,
+        local_dir: str | None = None,
+        encoding: str | None = None,
+        workers: int = 1,
+        s3: Any = None,
+    ) -> list[dict]:
+        if uri_col is not None and key_col is not None:
+            raise ValueError("Provide exactly one of uri_col or key_col, not both")
+        if uri_col is None and key_col is None:
+            raise ValueError("Provide either uri_col or key_col")
+        if key_col is not None and (bucket is None) == (bucket_col is None):
+            raise ValueError("Provide exactly one of bucket or bucket_col when using key_col")
 
-        def _one(idx: int, b: str, k: str, client: Any) -> None:
+        def _resolve(row: dict) -> tuple[str, str]:
+            if uri_col is not None:
+                return _parse_s3_uri(str(row.get(uri_col) or ""))
+            b = bucket if bucket is not None else str(row.get(bucket_col) or "")
+            k = str(row.get(key_col) or "")
+            return b, k
+
+        results: list[dict] = [{}] * len(rows)
+
+        def _one(idx: int, row: dict, client: Any) -> None:
+            try:
+                b, k = _resolve(row)
+            except (ValueError, TypeError) as exc:
+                results[idx] = {"status": "error", "message": str(exc)}
+                return
             local_path: str | None = None
             if local_dir is not None:
                 dest = Path(local_dir) / k
@@ -210,17 +239,17 @@ class ThaS3(AWSBase):
                 results[idx] = {"bucket": b, "key": k, "status": "error", "message": str(exc)}
 
         if workers > 1:
-            def _threaded(args: tuple[int, tuple[str, str]]) -> None:
-                idx, (b, k) = args
+            def _threaded(args: tuple[int, dict]) -> None:
+                idx, row = args
                 client = s3 if s3 is not None else self._thread_clients().s3()
-                _one(idx, b, k, client)
+                _one(idx, row, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_threaded, enumerate(pairs)))
+                list(pool.map(_threaded, enumerate(rows)))
         else:
             single_client = self._client(s3)
-            for idx, (b, k) in enumerate(pairs):
-                _one(idx, b, k, single_client)
+            for idx, row in enumerate(rows):
+                _one(idx, row, single_client)
 
         self.rows = results
         return results
