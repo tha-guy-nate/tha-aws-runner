@@ -1,6 +1,7 @@
 import io
 import shutil
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -171,3 +172,54 @@ class ThaS3(AWSBase):
 
         self.rows = result
         return result
+
+    def batch_download(
+        self,
+        bucket: str | None = None,
+        keys: list[str] | None = None,
+        *,
+        uris: list[str] | None = None,
+        local_dir: str | None = None,
+        encoding: str | None = None,
+        workers: int = 1,
+        s3: Any = None,
+    ) -> list[dict]:
+        pairs: list[tuple[str, str]]
+        if uris is not None:
+            pairs = [_parse_s3_uri(u) for u in uris]
+        elif bucket is not None:
+            resolved_keys = keys if keys is not None else self.list_files(bucket, s3=s3)
+            pairs = [(bucket, k) for k in resolved_keys]
+        else:
+            raise ValueError("Provide uris or bucket")
+
+        results: list[dict] = [{}] * len(pairs)
+
+        def _one(idx: int, b: str, k: str, client: Any) -> None:
+            local_path: str | None = None
+            if local_dir is not None:
+                dest = Path(local_dir) / k
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                local_path = str(dest)
+            try:
+                results[idx] = self.download_file(
+                    b, k, local_path=local_path, encoding=encoding, s3=client
+                )
+            except Exception as exc:
+                results[idx] = {"bucket": b, "key": k, "status": "error", "error": str(exc)}
+
+        if workers > 1:
+            def _threaded(args: tuple[int, tuple[str, str]]) -> None:
+                idx, (b, k) = args
+                client = s3 if s3 is not None else self._thread_clients().s3()
+                _one(idx, b, k, client)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_threaded, enumerate(pairs)))
+        else:
+            single_client = self._client(s3)
+            for idx, (b, k) in enumerate(pairs):
+                _one(idx, b, k, single_client)
+
+        self.rows = results
+        return results
