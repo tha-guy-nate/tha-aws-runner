@@ -18,12 +18,12 @@ from tha_aws_runner import ThaDdb, ThaS3, ThaSSM
 # DynamoDB — fetch a single item by partition key
 ddb = ThaDdb(region="us-east-1")
 record = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
-# {"status": "ok", "message": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}}
+# {"status": None, "message": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}}
 
 # DynamoDB — batch fetch by partition key (uses batch_get_item, chunks at 100)
 records = ddb.batch_fetch_by_pk("my_table", ["pk1", "pk2"], key_name="id", key_type="S")
-# {"my_table": {"pk1": {"status": "ok", "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}},
-#               "pk2": {"status": "not_found", "pk": "pk2", "table": "my_table", "data": None}}}
+# {"my_table": {"pk1": {"status": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}},
+#               "pk2": {"status": "error", "pk": "pk2", "table": "my_table", "data": None}}}
 
 # DynamoDB — update a single attribute (commit=True required to execute)
 result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
@@ -56,8 +56,8 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 
 | Method | Description |
 |--------|-------------|
-| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `"ok"` (item found), `"not_found"` (missing), or `"error"` (AWS error). |
-| `batch_fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Returns `{table_name: {pk: {status, message, pk, table, data}}}`. Each record's `status` is `"ok"`, `"not_found"`, or `"error"`. Chunk-level AWS errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return their data. Pass `workers>1` to parallelize chunks across threads. |
+| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). |
+| `batch_fetch_by_pk(table_name, partition_keys, *, fields=None, key_name=None, key_type=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Returns `{table_name: {pk: {status, message, pk, table, data}}}`. Each record's `status` is `None` (item found) or `"error"` (item missing or AWS error). Chunk-level AWS errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return their data. Pass `workers>1` to parallelize chunks across threads. |
 | `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, commit=False, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, `error`, or `dry_run`. |
 | `batch_update_by_pk(table_name, rows, pk_col, key_name, key_type, update_attr, update_type, value_col, *, increment_attr=None, workers=1, commit=False, dynamodb=None)` | Update an attribute for each row in a list. Wraps `update_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
 | `batch_delete_by_pk(table_name, rows, pk_col, key_name, key_type, *, workers=1, commit=False, dynamodb=None)` | Delete an item for each row in a list. Wraps `delete_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
