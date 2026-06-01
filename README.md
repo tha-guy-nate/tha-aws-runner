@@ -20,11 +20,11 @@ ddb = ThaDdb(region="us-east-1")
 record = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
 # {"status": None, "message": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}}
 
-# DynamoDB — batch fetch by partition key (uses batch_get_item, chunks at 100)
-rows = [{"id": "pk1"}, {"id": "pk2"}]
-records = ddb.batch_fetch_by_pk(rows, pk_col="id", table_name="my_table", key_name="id", key_type="S")
-# {"my_table": {"pk1": {"status": None, "pk": "pk1", "table": "my_table", "data": {"name": "Alice"}},
-#               "pk2": {"status": "error", "pk": "pk2", "table": "my_table", "data": None}}}
+# DynamoDB — batch fetch from CSV rows (uses batch_get_item, chunks at 100, deduplicates)
+rows = [{"user_id": "u1", "name": "Alice"}, {"user_id": "u2", "name": "Bob"}]
+records = ddb.batch_fetch_by_pk(rows, pk_col="user_id", table_name="users", key_name="user_id", key_type="S")
+# {"users": {"u1": {"status": None, "pk": "u1", "table": "users", "data": {"email": "alice@..."}},
+#            "u2": {"status": "error", "pk": "u2", "table": "users", "data": None}}}
 
 # DynamoDB — multi-table batch fetch (table name comes from each row)
 rows = [{"id": "pk1", "tbl": "orders"}, {"id": "pk2", "tbl": "users"}]
@@ -46,6 +46,17 @@ result = s3.download_file("my-bucket", "data/file.csv")
 s3.download_file("my-bucket", "data/file.csv", local_path="/tmp/out.csv")
 s3.download_file(uri="s3://my-bucket/data/file.csv", local_path="/tmp/out.csv")
 
+# S3 — batch download from CSV rows, fixed bucket
+rows = [{"key": "reports/jan.csv"}, {"key": "reports/feb.csv"}]
+results = s3.batch_download(rows, key_col="key", bucket="my-bucket", workers=4)
+
+# S3 — batch download using a full S3 URI column (mixed buckets)
+rows = [{"uri": "s3://bucket-a/jan.csv"}, {"uri": "s3://bucket-b/feb.csv"}]
+results = s3.batch_download(rows, uri_col="uri")
+
+# S3 — download all files under a prefix to a local directory
+results = s3.download_prefix("my-bucket", "reports/2024/", local_dir="/tmp/reports")
+
 # SSM — read a parameter
 ssm = ThaSSM(region="us-east-1")
 value = ssm.read_param("/my/app/secret", with_decryption=True)
@@ -61,8 +72,8 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 
 | Method | Description |
 |--------|-------------|
-| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). |
-| `batch_fetch_by_pk(rows, pk_col, *, table_name=None, table_name_col=None, key_name=None, key_type=None, fields=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Each row must have `pk_col`. Provide exactly one of `table_name` (single table) or `table_name_col` (per-row table). Returns `{table: {pk: {status, message, pk, table, data}}}`. `status` is `None` (found) or `"error"` (missing or AWS error). Duplicate PKs are deduplicated before the fetch. Chunk-level errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return data. Pass `workers>1` to parallelize chunks across threads. |
+| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). Pass `fields={"attr": "DDB_TYPE"}` (e.g. `{"name": "S", "age": "N"}`) to extract specific typed attributes; without it all attributes are returned. |
+| `batch_fetch_by_pk(rows, pk_col, *, table_name=None, table_name_col=None, key_name=None, key_type=None, fields=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Each row must have `pk_col`. Provide exactly one of `table_name` (single table) or `table_name_col` (per-row table). Returns `{table: {pk: {status, message, pk, table, data}}}`. `status` is `None` (found) or `"error"` (missing or AWS error). Duplicate PKs are deduplicated before the fetch. Pass `fields={"attr": "DDB_TYPE"}` to extract specific typed attributes; without it all attributes are returned. Chunk-level errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return data. Pass `workers>1` to parallelize chunks across threads. |
 | `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, commit=False, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, `error`, or `dry_run`. |
 | `batch_update_by_pk(table_name, rows, pk_col, key_name, key_type, update_attr, update_type, value_col, *, increment_attr=None, workers=1, commit=False, dynamodb=None)` | Update an attribute for each row in a list. Wraps `update_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
 | `batch_delete_by_pk(table_name, rows, pk_col, key_name, key_type, *, workers=1, commit=False, dynamodb=None)` | Delete an item for each row in a list. Wraps `delete_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
