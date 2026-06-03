@@ -10,8 +10,22 @@ T = TypeVar("T")
 
 
 class AWSClients:
-    def __init__(self, *, region: str | None = None, profile: str | None = None) -> None:
-        self.session = boto3.Session(profile_name=profile, region_name=region)
+    def __init__(
+        self,
+        *,
+        region: str | None = None,
+        profile: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+    ) -> None:
+        self.session = boto3.Session(
+            profile_name=profile,
+            region_name=region,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
 
     def sts(self) -> Any:
         return self.session.client("sts")
@@ -77,54 +91,6 @@ class AWSClients:
         return self.session.client("kinesis")
 
 
-def current_identity(
-    *, region: str | None = None, profile: str | None = None
-) -> tuple[Any, str | None, str | None, str | None]:
-    aws = AWSClients(region=region, profile=profile)
-    identity = aws.sts().get_caller_identity()
-    account_id, role_name, session_name = parse_assumed_role_arn(identity["Arn"])
-    return identity, account_id, role_name, session_name
-
-
-def parse_assumed_role_arn(arn: str) -> tuple[str | None, str | None, str | None]:
-    try:
-        arn_parts = arn.split(":")
-        account_id = arn_parts[4]
-        resource = arn_parts[5]
-        resource_parts = resource.split("/")
-        role_name = resource_parts[1]
-        session_name = resource_parts[2]
-        return account_id, role_name, session_name
-    except (IndexError, AttributeError):
-        return None, None, None
-
-
-def cli_auth_check(
-    account_id: str | None,
-    role_name: str | None,
-    allowed_account_id: str | list[str],
-    allowed_aws_role: str | list[str],
-) -> bool:
-    allowed_accounts = (
-        {allowed_account_id} if isinstance(allowed_account_id, str) else set(allowed_account_id)
-    )
-    allowed_roles = (
-        {allowed_aws_role} if isinstance(allowed_aws_role, str) else set(allowed_aws_role)
-    )
-
-    if account_id not in allowed_accounts or role_name not in allowed_roles:
-        print(
-            f"Current AWS identity:\n"
-            f"  Account: {account_id}\n"
-            f"  Role:    {role_name}\n\n"
-            f"Expected:\n"
-            f"  Account: {allowed_accounts}\n"
-            f"  Role:    {allowed_roles}"
-        )
-        return False
-    return True
-
-
 class AWSBase:
     def __init__(
         self,
@@ -133,12 +99,24 @@ class AWSBase:
         mode: str = "app",
         region: str | None = None,
         profile: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
     ) -> None:
         self.status_cb = status_cb
         self.mode = mode
         self._region = region
         self._profile = profile
-        self.clients = AWSClients(region=region, profile=profile)
+        self._aws_access_key_id = aws_access_key_id
+        self._aws_secret_access_key = aws_secret_access_key
+        self._aws_session_token = aws_session_token
+        self.clients = AWSClients(
+            region=region,
+            profile=profile,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
         self._thread_local = threading.local()
         self._client_lock = threading.Lock()
         self.rows: Any = None
@@ -146,7 +124,13 @@ class AWSBase:
     def _thread_clients(self) -> AWSClients:
         """Return a per-thread AWSClients instance (one session per thread)."""
         if not hasattr(self._thread_local, "clients"):
-            self._thread_local.clients = AWSClients(region=self._region, profile=self._profile)
+            self._thread_local.clients = AWSClients(
+                region=self._region,
+                profile=self._profile,
+                aws_access_key_id=self._aws_access_key_id,
+                aws_secret_access_key=self._aws_secret_access_key,
+                aws_session_token=self._aws_session_token,
+            )
         clients: AWSClients = self._thread_local.clients
         return clients
 

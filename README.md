@@ -67,7 +67,16 @@ value = ssm.read_param("/my/app/secret", with_decryption=True)
 ### `ThaDdb`
 
 ```python
-ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
+ThaDdb(
+    *,
+    status_cb=None,
+    mode="app",
+    region=None,
+    profile=None,
+    aws_access_key_id=None,
+    aws_secret_access_key=None,
+    aws_session_token=None,
+)
 ```
 
 | Method | Description |
@@ -82,12 +91,23 @@ ThaDdb(*, status_cb=None, mode="app", region=None, profile=None)
 
 All write methods default to `commit=False` (dry run) — pass `commit=True` to execute. In dry-run mode the AWS call is skipped and `status` is `"dry_run"`.
 
+> `Scan` is intentionally not implemented — it reads every item in a table and burns read capacity proportional to table size. Use raw boto3 for one-off table scans.
+
 > GSI (Global Secondary Index) support for `ThaDdb` is planned for a future version.
 
 ### `ThaS3`
 
 ```python
-ThaS3(*, status_cb=None, mode="app", region=None, profile=None)
+ThaS3(
+    *,
+    status_cb=None,
+    mode="app",
+    region=None,
+    profile=None,
+    aws_access_key_id=None,
+    aws_secret_access_key=None,
+    aws_session_token=None,
+)
 ```
 
 | Method | Description |
@@ -102,7 +122,16 @@ ThaS3(*, status_cb=None, mode="app", region=None, profile=None)
 ### `ThaSSM`
 
 ```python
-ThaSSM(*, status_cb=None, mode="app", region=None, profile=None)
+ThaSSM(
+    *,
+    status_cb=None,
+    mode="app",
+    region=None,
+    profile=None,
+    aws_access_key_id=None,
+    aws_secret_access_key=None,
+    aws_session_token=None,
+)
 ```
 
 | Method | Description |
@@ -120,10 +149,22 @@ All methods set `self.rows` to their return value.
 ### Helpers
 
 ```python
-from tha_aws_runner import AWSClients, current_identity, parse_assumed_role_arn, cli_auth_check
+from tha_aws_runner import (
+    AWSClients,
+    cli_auth_check,
+    current_identity,
+    parse_arn,
+    parse_assumed_role_arn,
+)
 
-# Get all boto3 clients from one session
+# Get all boto3 clients from one session (supports inline creds or profile)
 clients = AWSClients(region="us-east-1", profile="my-profile")
+clients = AWSClients(
+    region="us-east-1",
+    aws_access_key_id="AKIA...",
+    aws_secret_access_key="secret",
+    aws_session_token="token",  # optional, for temporary credentials
+)
 s3 = clients.s3()
 
 # Check the current AWS identity
@@ -132,7 +173,17 @@ identity, account_id, role_name, session_name = current_identity(region="us-east
 # Guard a script to the expected account/role
 if not cli_auth_check(account_id, role_name, "123456789012", "my_role"):
     raise SystemExit("Wrong AWS identity")
+
+# Parse any AWS ARN
+result = parse_arn("arn:aws:dynamodb:us-east-1:123456789012:table/MyTable")
+# {"partition": "aws", "service": "dynamodb", "region": "us-east-1",
+#  "account_id": "123456789012", "resource_type": "table", "resource_id": "MyTable"}
+
+result = parse_arn("arn:aws:sns:us-east-1:123456789012:MyTopic")
+# {"partition": "aws", "service": "sns", ..., "resource_type": None, "resource_id": "MyTopic"}
 ```
+
+All three service classes (`ThaDdb`, `ThaS3`, `ThaSSM`) accept the same `aws_access_key_id`, `aws_secret_access_key`, and `aws_session_token` kwargs for inline credential injection alongside the existing `profile=` option.
 
 ## Alternatives
 
