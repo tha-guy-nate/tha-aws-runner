@@ -12,8 +12,19 @@ class ThaSSM(AWSBase):
         mode: str = "app",
         region: str | None = None,
         profile: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
     ) -> None:
-        super().__init__(status_cb=status_cb, mode=mode, region=region, profile=profile)
+        super().__init__(
+            status_cb=status_cb,
+            mode=mode,
+            region=region,
+            profile=profile,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
         self._ssm: Any = None
 
     def _client(self, ssm: Any = None) -> Any:

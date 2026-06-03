@@ -8,71 +8,6 @@ from botocore.exceptions import ClientError
 from tha_aws_runner.aws_base import AWSBase
 from tha_aws_runner.errors import AwsError
 
-_THROTTLE_CODES = frozenset({
-    "ProvisionedThroughputExceededException",
-    "ThrottlingException",
-    "RequestLimitExceeded",
-})
-
-
-def _is_throttled(code: str | None) -> bool:
-    return code in _THROTTLE_CODES
-
-
-def _extract_any(attr: dict) -> Any:
-    if not attr:
-        return None
-    return next(iter(attr.values()), None)
-
-
-def _extract_typed(attr: dict, expected_type: str = "S") -> Any:
-    if not attr:
-        return None
-    return attr.get(expected_type, None)
-
-
-def _to_ddb_attr(val: Any, update_type: str) -> dict:
-    if isinstance(val, dict) and len(val) == 1:
-        t, v = next(iter(val.items()))
-        if t != update_type:
-            raise ValueError(f"Typed value type {t} does not match update_type {update_type}")
-        val = v
-
-    t = update_type.upper()
-
-    if t == "BOOL":
-        if val is True or val is False:
-            return {"BOOL": val}
-        if isinstance(val, str):
-            s = val.strip().lower()
-            if s in ("true", "t", "1", "yes", "y"):
-                return {"BOOL": True}
-            if s in ("false", "f", "0", "no", "n"):
-                return {"BOOL": False}
-        raise ValueError("BOOL only allows True/False")
-
-    if t == "S":
-        if val is None:
-            raise ValueError("S does not allow None (use NULL)")
-        return {"S": str(val)}
-
-    if t == "N":
-        if val is None:
-            raise ValueError("N does not allow None (use NULL)")
-        if isinstance(val, (int, float)):
-            return {"N": str(val)}
-        if isinstance(val, str):
-            float(val.strip())
-            return {"N": val.strip()}
-        raise ValueError("N requires int/float or numeric string")
-
-    if t == "NULL":
-        if val not in (None, ""):
-            raise ValueError("NULL expects None/blank")
-        return {"NULL": True}
-
-    raise ValueError(f"Unsupported update_type: {update_type}")
-
 
 class ThaDdb(AWSBase):
     def __init__(
@@ -82,9 +17,85 @@ class ThaDdb(AWSBase):
         mode: str = "app",
         region: str | None = None,
         profile: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
     ) -> None:
-        super().__init__(status_cb=status_cb, mode=mode, region=region, profile=profile)
+        super().__init__(
+            status_cb=status_cb,
+            mode=mode,
+            region=region,
+            profile=profile,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
         self._dynamodb: Any = None
+
+    _THROTTLE_CODES = frozenset({
+        "ProvisionedThroughputExceededException",
+        "ThrottlingException",
+        "RequestLimitExceeded",
+    })
+
+    @staticmethod
+    def _is_throttled(code: str | None) -> bool:
+        return code in ThaDdb._THROTTLE_CODES
+
+    @staticmethod
+    def _extract_any(attr: dict) -> Any:
+        if not attr:
+            return None
+        return next(iter(attr.values()), None)
+
+    @staticmethod
+    def _extract_typed(attr: dict, expected_type: str = "S") -> Any:
+        if not attr:
+            return None
+        return attr.get(expected_type, None)
+
+    @staticmethod
+    def _to_ddb_attr(val: Any, update_type: str) -> dict:
+        if isinstance(val, dict) and len(val) == 1:
+            t, v = next(iter(val.items()))
+            if t != update_type:
+                raise ValueError(f"Typed value type {t} does not match update_type {update_type}")
+            val = v
+
+        t = update_type.upper()
+
+        if t == "BOOL":
+            if val is True or val is False:
+                return {"BOOL": val}
+            if isinstance(val, str):
+                s = val.strip().lower()
+                if s in ("true", "t", "1", "yes", "y"):
+                    return {"BOOL": True}
+                if s in ("false", "f", "0", "no", "n"):
+                    return {"BOOL": False}
+            raise ValueError("BOOL only allows True/False")
+
+        if t == "S":
+            if val is None:
+                raise ValueError("S does not allow None (use NULL)")
+            return {"S": str(val)}
+
+        if t == "N":
+            if val is None:
+                raise ValueError("N does not allow None (use NULL)")
+            if isinstance(val, (int, float)):
+                return {"N": str(val)}
+            if isinstance(val, str):
+                float(val.strip())
+                return {"N": val.strip()}
+            raise ValueError("N requires int/float or numeric string")
+
+        if t == "NULL":
+            if val not in (None, ""):
+                raise ValueError("NULL expects None/blank")
+            return {"NULL": True}
+
+        raise ValueError(f"Unsupported update_type: {update_type}")
 
     def _client(self, dynamodb: Any = None) -> Any:
         if dynamodb is not None:
@@ -134,7 +145,7 @@ class ThaDdb(AWSBase):
                 "message": None,
                 "pk": partition_key,
                 "table": table_name,
-                "data": {k: _extract_any(v) for k, v in item.items() if k != key_name},
+                "data": {k: self._extract_any(v) for k, v in item.items() if k != key_name},
             }
         else:
             result = {
@@ -143,7 +154,7 @@ class ThaDdb(AWSBase):
                 "pk": partition_key,
                 "table": table_name,
                 "data": {
-                    field: _extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                    field: self._extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
                     for field, expected_type in fields.items()
                 },
             }
@@ -197,15 +208,15 @@ class ThaDdb(AWSBase):
         ) -> None:
             for tbl, items in responses.items():
                 for item in items:
-                    pk_val = _extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
+                    pk_val = self._extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
                     if pk_val is None:
                         continue
                     local_found.add((tbl, pk_val))
                     if fields is None:
-                        data = {k: _extract_any(v) for k, v in item.items() if k != key_name}
+                        data = {k: self._extract_any(v) for k, v in item.items() if k != key_name}
                     else:
                         data = {
-                            f: _extract_typed(item.get(f), t)  # type: ignore[arg-type]
+                            f: self._extract_typed(item.get(f), t)  # type: ignore[arg-type]
                             for f, t in fields.items()
                         }
                     local_records.setdefault(tbl, {})[pk_val] = {
@@ -326,7 +337,7 @@ class ThaDdb(AWSBase):
         MAX_RETRIES = 2
         RETRY_BACKOFF = 0.5
 
-        ddb_update_value = _to_ddb_attr(update_value, update_type)
+        ddb_update_value = self._to_ddb_attr(update_value, update_type)
 
         if not commit:
             result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
@@ -385,7 +396,7 @@ class ThaDdb(AWSBase):
                         self.rows = result
                     return result
 
-                if _is_throttled(code):
+                if self._is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
                         if _set_rows:
@@ -596,7 +607,7 @@ class ThaDdb(AWSBase):
                         self.rows = result
                     return result
 
-                if _is_throttled(code):
+                if self._is_throttled(code):
                     if attempt == MAX_RETRIES:
                         result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
                         if _set_rows:
