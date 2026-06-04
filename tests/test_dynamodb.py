@@ -470,3 +470,65 @@ def test_delete_by_pk_skipped_when_not_exists(mock_ddb_client):
     result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
     assert result["status"] == "skipped"
     assert result["message"] == "Item does not exist"
+
+
+# --- ARN resolution ---
+
+_TABLE_ARN = "arn:aws:dynamodb:us-east-1:123456789012:table/my_table"
+
+
+def test_resolve_table_plain():
+    assert ThaDdb._resolve_table("my_table") == "my_table"
+
+
+def test_resolve_table_arn():
+    assert ThaDdb._resolve_table(_TABLE_ARN) == "my_table"
+
+
+def test_fetch_by_pk_arn(mock_ddb_client):
+    mock_ddb_client.get_item.return_value = {"Item": {"id": {"S": "pk1"}}}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.fetch_by_pk(_TABLE_ARN, "pk1", key_name="id", key_type="S")
+    assert result["table"] == "my_table"
+    mock_ddb_client.get_item.assert_called_once()
+    assert mock_ddb_client.get_item.call_args[1]["TableName"] == "my_table"
+
+
+def test_update_by_pk_arn(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {"Attributes": {}}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        _TABLE_ARN, "pk1", "id", "S", "status", "S", "active", commit=True
+    )
+    assert result["status"] == "updated"
+    assert mock_ddb_client.update_item.call_args[1]["TableName"] == "my_table"
+
+
+def test_delete_by_pk_arn(mock_ddb_client):
+    mock_ddb_client.delete_item.return_value = {}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.delete_by_pk(_TABLE_ARN, "pk1", "id", "S", commit=True)
+    assert result["status"] == "deleted"
+    assert mock_ddb_client.delete_item.call_args[1]["TableName"] == "my_table"
+
+
+def test_batch_write_arn(mock_ddb_client):
+    mock_ddb_client.batch_write_item.return_value = {"UnprocessedItems": {}}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.batch_write(_TABLE_ARN, [{"id": {"S": "pk1"}}], commit=True)
+    assert result["written"] == 1
+    assert mock_ddb_client.batch_write_item.call_args[1]["RequestItems"] == {
+        "my_table": [{"PutRequest": {"Item": {"id": {"S": "pk1"}}}}]
+    }
+
+
+def test_batch_fetch_by_pk_fixed_arn(mock_ddb_client):
+    mock_ddb_client.batch_get_item.return_value = {
+        "Responses": {"my_table": [{"id": {"S": "pk1"}, "name": {"S": "Alice"}}]},
+        "UnprocessedKeys": {},
+    }
+    ddb = make_ddb(mock_ddb_client)
+    rows = [{"id": "pk1"}]
+    result = ddb.batch_fetch_by_pk(rows, "id", table_name=_TABLE_ARN, key_name="id", key_type="S")
+    assert "my_table" in result
+    assert result["my_table"]["pk1"]["status"] is None

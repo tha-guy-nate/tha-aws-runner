@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 
 from tha_aws_runner.aws_base import AWSBase
 from tha_aws_runner.errors import AwsError
+from tha_aws_runner.utils import parse_arn
 
 
 class ThaDdb(AWSBase):
@@ -53,6 +54,15 @@ class ThaDdb(AWSBase):
         if not attr:
             return None
         return attr.get(expected_type, None)
+
+    @staticmethod
+    def _resolve_table(table_name: str) -> str:
+        if not table_name.startswith("arn:"):
+            return table_name
+        resource_id = parse_arn(table_name).get("resource_id")
+        if not resource_id:
+            raise ValueError(f"Could not extract table name from ARN: {table_name!r}")
+        return resource_id
 
     @staticmethod
     def _to_ddb_attr(val: Any, update_type: str) -> dict:
@@ -115,6 +125,7 @@ class ThaDdb(AWSBase):
         key_type: str | None = None,
         dynamodb: Any = None,
     ) -> dict:
+        table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
         key = {key_name: {key_type: partition_key}}
         try:
@@ -177,12 +188,16 @@ class ThaDdb(AWSBase):
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 
+        if table_name is not None:
+            table_name = self._resolve_table(table_name)
+
         MAX_BATCH_GET = 100
         MAX_RETRIES = 2
 
         seen: dict[tuple[str, str], None] = {}
         for row in rows:
-            tbl = table_name if table_name else str(row.get(table_name_col) or "")
+            _raw = str(row.get(table_name_col) or "")
+            tbl = table_name if table_name else self._resolve_table(_raw)
             pk = str(row.get(pk_col) or "")
             if tbl and pk:
                 seen[(tbl, pk)] = None
@@ -332,6 +347,7 @@ class ThaDdb(AWSBase):
         dynamodb: Any = None,
         _set_rows: bool = True,
     ) -> dict:
+        table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 
         MAX_RETRIES = 2
@@ -435,13 +451,17 @@ class ThaDdb(AWSBase):
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 
+        if table_name is not None:
+            table_name = self._resolve_table(table_name)
+
         results: list[dict] = [{}] * len(rows)
 
         if workers > 1:
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col) or "")
+                tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
@@ -453,7 +473,8 @@ class ThaDdb(AWSBase):
                 list(pool.map(_process, enumerate(rows)))
         else:
             for idx, row in enumerate(rows):
-                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col) or "")
+                tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
@@ -481,13 +502,17 @@ class ThaDdb(AWSBase):
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 
+        if table_name is not None:
+            table_name = self._resolve_table(table_name)
+
         results: list[dict] = [{}] * len(rows)
 
         if workers > 1:
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col) or "")
+                tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
                     tbl, pk, key_name, key_type, commit=commit, dynamodb=client,
@@ -498,7 +523,8 @@ class ThaDdb(AWSBase):
                 list(pool.map(_process, enumerate(rows)))
         else:
             for idx, row in enumerate(rows):
-                tbl = table_name if table_name is not None else str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col) or "")
+                tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
                     tbl, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
@@ -516,6 +542,7 @@ class ThaDdb(AWSBase):
         commit: bool = False,
         dynamodb: Any = None,
     ) -> dict:
+        table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 
         if not commit:
@@ -572,6 +599,7 @@ class ThaDdb(AWSBase):
         dynamodb: Any = None,
         _set_rows: bool = True,
     ) -> dict:
+        table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 
         if not commit:

@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import ClientError
 from tqdm import tqdm
 
 from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.utils import parse_arn
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -47,6 +49,29 @@ class ThaS3(AWSBase):
         )
         self._s3: Any = None
 
+    @staticmethod
+    def _resolve_bucket(bucket: str) -> str:
+        if not bucket.startswith("arn:"):
+            return bucket
+        parsed = parse_arn(bucket)
+        # bucket ARN: arn:aws:s3:::my-bucket  → resource_type=None, resource_id="my-bucket"
+        # object ARN: arn:aws:s3:::my-bucket/key → resource_type="my-bucket"
+        result = parsed.get("resource_type") or parsed.get("resource_id")
+        if not result:
+            raise ValueError(f"Could not extract bucket name from ARN: {bucket!r}")
+        return result
+
+    @staticmethod
+    def _resolve_uri_or_arn(uri: str) -> tuple[str, str]:
+        if not uri.startswith("arn:"):
+            return _parse_s3_uri(uri)
+        parsed = parse_arn(uri)
+        bucket = parsed.get("resource_type")
+        key = parsed.get("resource_id")
+        if not bucket or not key:
+            raise ValueError(f"Could not extract bucket/key from S3 object ARN: {uri!r}")
+        return bucket, key
+
     def _client(self, s3: Any = None) -> Any:
         if s3 is not None:
             return s3
@@ -68,7 +93,9 @@ class ThaS3(AWSBase):
         s3: Any = None,
     ) -> dict:
         if uri is not None:
-            bucket, key = _parse_s3_uri(uri)
+            bucket, key = self._resolve_uri_or_arn(uri)
+        elif bucket is not None:
+            bucket = self._resolve_bucket(bucket)
         if bucket is None or key is None:
             raise ValueError("Provide uri or both bucket and key")
 
@@ -109,6 +136,7 @@ class ThaS3(AWSBase):
         *,
         s3: Any = None,
     ) -> list[str]:
+        bucket = self._resolve_bucket(bucket)
         s3_client = self._client(s3)
         keys: list[str] = []
         paginator = s3_client.get_paginator("list_objects_v2")
@@ -128,7 +156,9 @@ class ThaS3(AWSBase):
         s3: Any = None,
     ) -> dict:
         if uri is not None:
-            bucket, key = _parse_s3_uri(uri)
+            bucket, key = self._resolve_uri_or_arn(uri)
+        elif bucket is not None:
+            bucket = self._resolve_bucket(bucket)
         if bucket is None or key is None:
             raise ValueError("Provide uri or both bucket and key")
 
@@ -154,7 +184,9 @@ class ThaS3(AWSBase):
         s3: Any = None,
     ) -> dict:
         if uri is not None:
-            bucket, key = _parse_s3_uri(uri)
+            bucket, key = self._resolve_uri_or_arn(uri)
+        elif bucket is not None:
+            bucket = self._resolve_bucket(bucket)
         if bucket is None or key is None:
             raise ValueError("Provide uri or both bucket and key")
 
@@ -185,6 +217,77 @@ class ThaS3(AWSBase):
         self.rows = result
         return result
 
+    def object_exists(
+        self,
+        bucket: str | None = None,
+        key: str | None = None,
+        *,
+        uri: str | None = None,
+        s3: Any = None,
+    ) -> bool:
+        if uri is not None:
+            bucket, key = self._resolve_uri_or_arn(uri)
+        elif bucket is not None:
+            bucket = self._resolve_bucket(bucket)
+        if bucket is None or key is None:
+            raise ValueError("Provide uri or both bucket and key")
+        s3_client = self._client(s3)
+        try:
+            s3_client.head_object(Bucket=bucket, Key=key)
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                return False
+            raise
+
+    def copy_file(
+        self,
+        src_bucket: str | None = None,
+        src_key: str | None = None,
+        dst_bucket: str | None = None,
+        dst_key: str | None = None,
+        *,
+        src_uri: str | None = None,
+        dst_uri: str | None = None,
+        commit: bool = False,
+        s3: Any = None,
+    ) -> dict:
+        if src_uri is not None:
+            src_bucket, src_key = self._resolve_uri_or_arn(src_uri)
+        elif src_bucket is not None:
+            src_bucket = self._resolve_bucket(src_bucket)
+        if dst_uri is not None:
+            dst_bucket, dst_key = self._resolve_uri_or_arn(dst_uri)
+        elif dst_bucket is not None:
+            dst_bucket = self._resolve_bucket(dst_bucket)
+        if src_bucket is None or src_key is None:
+            raise ValueError("Provide src_uri or both src_bucket and src_key")
+        if dst_bucket is None or dst_key is None:
+            raise ValueError("Provide dst_uri or both dst_bucket and dst_key")
+
+        if not commit:
+            result = {
+                "src_bucket": src_bucket, "src_key": src_key,
+                "dst_bucket": dst_bucket, "dst_key": dst_key,
+                "status": "dry_run",
+            }
+            self.rows = result
+            return result
+
+        s3_client = self._client(s3)
+        s3_client.copy_object(
+            CopySource={"Bucket": src_bucket, "Key": src_key},
+            Bucket=dst_bucket,
+            Key=dst_key,
+        )
+        result = {
+            "src_bucket": src_bucket, "src_key": src_key,
+            "dst_bucket": dst_bucket, "dst_key": dst_key,
+            "status": "copied",
+        }
+        self.rows = result
+        return result
+
     def download_prefix(
         self,
         bucket: str,
@@ -195,6 +298,7 @@ class ThaS3(AWSBase):
         workers: int = 1,
         s3: Any = None,
     ) -> list[dict]:
+        bucket = self._resolve_bucket(bucket)
         keys = self.list_files(bucket, prefix, s3=s3)
         rows = [{"key": k} for k in keys]
         return self.batch_download(
@@ -221,6 +325,9 @@ class ThaS3(AWSBase):
             raise ValueError("Provide either uri_col or key_col")
         if key_col is not None and (bucket is None) == (bucket_col is None):
             raise ValueError("Provide exactly one of bucket or bucket_col when using key_col")
+
+        if bucket is not None:
+            bucket = self._resolve_bucket(bucket)
 
         def _resolve(row: dict) -> tuple[str, str]:
             if uri_col is not None:
