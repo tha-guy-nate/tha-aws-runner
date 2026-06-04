@@ -3,16 +3,21 @@
 from tha_aws_runner.aws_base import AWSBase, AWSClients
 from tha_aws_runner.dynamodb import ThaDdb
 from tha_aws_runner.errors import AwsError
+from tha_aws_runner.gsi import BatchCountResult, BatchQueryResult, BatchUpdateResult, ThaGsi
 from tha_aws_runner.s3 import ThaS3
 from tha_aws_runner.ssm import ThaSSM
 from tha_aws_runner.utils import cli_auth_check, current_identity, parse_arn, parse_assumed_role_arn
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 __all__ = [
     "AWSBase",
     "AWSClients",
     "AwsError",
+    "BatchCountResult",
+    "BatchQueryResult",
+    "BatchUpdateResult",
     "ThaDdb",
+    "ThaGsi",
     "ThaS3",
     "ThaSSM",
     "cli_auth_check",

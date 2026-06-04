@@ -8,7 +8,7 @@ from tha_aws_runner.s3 import ThaS3, _parse_s3_uri
 
 def make_s3(mock_client: MagicMock) -> ThaS3:
     s3 = ThaS3(region="us-east-1")
-    s3._s3 = mock_client
+    s3._thread_local.s3 = mock_client
     return s3
 
 

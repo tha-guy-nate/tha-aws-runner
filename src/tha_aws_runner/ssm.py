@@ -26,8 +26,6 @@ class ThaSSM(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
-        self._ssm: Any = None
-
     @staticmethod
     def _resolve_param_path(path: str) -> str:
         if not path.startswith("arn:"):
@@ -40,10 +38,9 @@ class ThaSSM(AWSBase):
     def _client(self, ssm: Any = None) -> Any:
         if ssm is not None:
             return ssm
-        with self._client_lock:
-            if self._ssm is None:
-                self._ssm = self.clients.ssm()
-            return self._ssm
+        if not hasattr(self._thread_local, "ssm"):
+            self._thread_local.ssm = self._thread_clients().ssm()
+        return self._thread_local.ssm  # type: ignore[no-any-return]
 
     def read_param(
         self,

@@ -31,8 +31,6 @@ class ThaDdb(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
-        self._dynamodb: Any = None
-
     _THROTTLE_CODES = frozenset({
         "ProvisionedThroughputExceededException",
         "ThrottlingException",
@@ -110,10 +108,9 @@ class ThaDdb(AWSBase):
     def _client(self, dynamodb: Any = None) -> Any:
         if dynamodb is not None:
             return dynamodb
-        with self._client_lock:
-            if self._dynamodb is None:
-                self._dynamodb = self.clients.dynamodb()
-            return self._dynamodb
+        if not hasattr(self._thread_local, "dynamodb"):
+            self._thread_local.dynamodb = self._thread_clients().dynamodb()
+        return self._thread_local.dynamodb  # type: ignore[no-any-return]
 
     def fetch_by_pk(
         self,
@@ -183,6 +180,8 @@ class ThaDdb(AWSBase):
         key_type: str | None = None,
         fields: dict[str, str] | None = None,
         workers: int = 1,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         dynamodb: Any = None,
     ) -> dict[str, dict[str, dict]]:
         if (table_name is None) == (table_name_col is None):
@@ -314,11 +313,16 @@ class ThaDdb(AWSBase):
                 return _process_chunk(chunk_pairs, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for lr, lf in pool.map(_threaded, chunks):
+                for lr, lf in self._progress_iter(
+                    pool.map(_threaded, chunks),
+                    total=len(chunks), desc=progress_desc, show_progress=show_progress,
+                ):
                     _merge(lr, lf)
         else:
             client = self._client(dynamodb)
-            for chunk in chunks:
+            for chunk in self._progress_iter(
+                chunks, total=len(chunks), desc=progress_desc, show_progress=show_progress,
+            ):
                 _merge(*_process_chunk(chunk, client))
 
         for tbl, pk in unique_pairs:
@@ -445,6 +449,8 @@ class ThaDdb(AWSBase):
         table_name_col: str | None = None,
         increment_attr: str | None = None,
         workers: int = 1,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict]:
@@ -470,9 +476,14 @@ class ThaDdb(AWSBase):
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_process, enumerate(rows)))
+                list(self._progress_iter(
+                    pool.map(_process, enumerate(rows)),
+                    total=len(rows), desc=progress_desc, show_progress=show_progress,
+                ))
         else:
-            for idx, row in enumerate(rows):
+            for idx, row in self._progress_iter(
+                enumerate(rows), total=len(rows), desc=progress_desc, show_progress=show_progress,
+            ):
                 _raw = str(row.get(table_name_col) or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
@@ -496,6 +507,8 @@ class ThaDdb(AWSBase):
         table_name: str | None = None,
         table_name_col: str | None = None,
         workers: int = 1,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict]:
@@ -520,9 +533,14 @@ class ThaDdb(AWSBase):
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_process, enumerate(rows)))
+                list(self._progress_iter(
+                    pool.map(_process, enumerate(rows)),
+                    total=len(rows), desc=progress_desc, show_progress=show_progress,
+                ))
         else:
-            for idx, row in enumerate(rows):
+            for idx, row in self._progress_iter(
+                enumerate(rows), total=len(rows), desc=progress_desc, show_progress=show_progress,
+            ):
                 _raw = str(row.get(table_name_col) or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
@@ -539,6 +557,8 @@ class ThaDdb(AWSBase):
         table_name: str,
         items: list[dict],
         *,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> dict:
@@ -564,7 +584,9 @@ class ThaDdb(AWSBase):
             chunks = [batch[i : i + 25] for i in range(0, len(batch), 25)]
             unprocessed = {}
 
-            for chunk in self._progress_iter(chunks, total=len(chunks), desc="batch_write"):
+            for chunk in self._progress_iter(
+                chunks, total=len(chunks), desc=progress_desc, show_progress=show_progress
+            ):
                 try:
                     response = dynamodb.batch_write_item(RequestItems={table_name: chunk})
                 except ClientError as e:
