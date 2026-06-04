@@ -140,8 +140,9 @@ class AWSBase:
         *,
         total: int | None = None,
         desc: str | None = None,
+        show_progress: bool = False,
     ) -> Iterable[T]:
-        if self.mode == "cli":
+        if show_progress or self.mode == "cli":
             ncols = min(shutil.get_terminal_size(fallback=(85, 24)).columns, 85)
             return tqdm(iterable, total=total, desc=desc, ncols=ncols)  # type: ignore[return-value]
         return iterable

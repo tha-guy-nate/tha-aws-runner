@@ -12,7 +12,7 @@ def _client_error(code: str, message: str = "error") -> ClientError:
 
 def make_ddb(mock_client: MagicMock) -> ThaDdb:
     ddb = ThaDdb(region="us-east-1")
-    ddb._dynamodb = mock_client
+    ddb._thread_local.dynamodb = mock_client
     return ddb
 
 
@@ -252,7 +252,7 @@ def test_update_by_pk_to_ddb_attr_bool():
     # test via a mock that captures the call args
     mock_client = MagicMock()
     mock_client.update_item.return_value = {"Attributes": {}}
-    ddb._dynamodb = mock_client
+    ddb._thread_local.dynamodb = mock_client
     result = ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", True, commit=True)
     assert result["status"] == "updated"
 
@@ -260,7 +260,7 @@ def test_update_by_pk_to_ddb_attr_bool():
 def test_update_by_pk_to_ddb_attr_invalid_bool():
     ddb = ThaDdb()
     mock_client = MagicMock()
-    ddb._dynamodb = mock_client
+    ddb._thread_local.dynamodb = mock_client
     with pytest.raises(ValueError, match="BOOL only allows"):
         ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", "maybe")
 

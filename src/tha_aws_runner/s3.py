@@ -47,8 +47,6 @@ class ThaS3(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
-        self._s3: Any = None
-
     @staticmethod
     def _resolve_bucket(bucket: str) -> str:
         if not bucket.startswith("arn:"):
@@ -75,10 +73,9 @@ class ThaS3(AWSBase):
     def _client(self, s3: Any = None) -> Any:
         if s3 is not None:
             return s3
-        with self._client_lock:
-            if self._s3 is None:
-                self._s3 = self.clients.s3()
-            return self._s3
+        if not hasattr(self._thread_local, "s3"):
+            self._thread_local.s3 = self._thread_clients().s3()
+        return self._thread_local.s3  # type: ignore[no-any-return]
 
     def upload_file(
         self,
@@ -296,6 +293,8 @@ class ThaS3(AWSBase):
         local_dir: str | None = None,
         encoding: str | None = None,
         workers: int = 1,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         s3: Any = None,
     ) -> list[dict]:
         bucket = self._resolve_bucket(bucket)
@@ -303,7 +302,8 @@ class ThaS3(AWSBase):
         rows = [{"key": k} for k in keys]
         return self.batch_download(
             rows, key_col="key", bucket=bucket,
-            local_dir=local_dir, encoding=encoding, workers=workers, s3=s3,
+            local_dir=local_dir, encoding=encoding, workers=workers,
+            show_progress=show_progress, progress_desc=progress_desc, s3=s3,
         )
 
     def batch_download(
@@ -317,6 +317,8 @@ class ThaS3(AWSBase):
         local_dir: str | None = None,
         encoding: str | None = None,
         workers: int = 1,
+        show_progress: bool = False,
+        progress_desc: str | None = None,
         s3: Any = None,
     ) -> list[dict]:
         if uri_col is not None and key_col is not None:
@@ -363,10 +365,15 @@ class ThaS3(AWSBase):
                 _one(idx, row, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_threaded, enumerate(rows)))
+                list(self._progress_iter(
+                    pool.map(_threaded, enumerate(rows)),
+                    total=len(rows), desc=progress_desc, show_progress=show_progress,
+                ))
         else:
             single_client = self._client(s3)
-            for idx, row in enumerate(rows):
+            for idx, row in self._progress_iter(
+                enumerate(rows), total=len(rows), desc=progress_desc, show_progress=show_progress,
+            ):
                 _one(idx, row, single_client)
 
         self.rows = results
