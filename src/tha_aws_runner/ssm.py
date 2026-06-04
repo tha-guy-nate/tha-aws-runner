@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any
 
 from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.utils import parse_arn
 
 
 class ThaSSM(AWSBase):
@@ -27,6 +28,15 @@ class ThaSSM(AWSBase):
         )
         self._ssm: Any = None
 
+    @staticmethod
+    def _resolve_param_path(path: str) -> str:
+        if not path.startswith("arn:"):
+            return path
+        resource_id = parse_arn(path).get("resource_id")
+        if not resource_id:
+            raise ValueError(f"Could not extract parameter path from ARN: {path!r}")
+        return "/" + resource_id
+
     def _client(self, ssm: Any = None) -> Any:
         if ssm is not None:
             return ssm
@@ -42,6 +52,7 @@ class ThaSSM(AWSBase):
         with_decryption: bool = False,
         ssm: Any = None,
     ) -> str:
+        path = self._resolve_param_path(path)
         ssm_client = self._client(ssm)
         response = ssm_client.get_parameter(Name=path, WithDecryption=with_decryption)
         value: str = response["Parameter"]["Value"]
@@ -76,6 +87,7 @@ class ThaSSM(AWSBase):
         commit: bool = False,
         ssm: Any = None,
     ) -> dict:
+        path = self._resolve_param_path(path)
         if not commit:
             result: dict[str, Any] = {"path": path, "status": "dry_run"}
             self.rows = result

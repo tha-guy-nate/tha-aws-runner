@@ -57,6 +57,14 @@ results = s3.batch_download(rows, uri_col="uri")
 # S3 — download all files under a prefix to a local directory
 results = s3.download_prefix("my-bucket", "reports/2024/", local_dir="/tmp/reports")
 
+# S3 — check whether an object exists
+exists = s3.object_exists("my-bucket", "data/file.csv")
+exists = s3.object_exists(uri="s3://my-bucket/data/file.csv")
+
+# S3 — copy an object within or between buckets (commit=True required)
+result = s3.copy_file("src-bucket", "old/key.csv", "dst-bucket", "new/key.csv", commit=True)
+result = s3.copy_file(src_uri="s3://src-bucket/old/key.csv", dst_uri="s3://dst-bucket/new/key.csv", commit=True)
+
 # SSM — read a parameter
 ssm = ThaSSM(region="us-east-1")
 value = ssm.read_param("/my/app/secret", with_decryption=True)
@@ -81,7 +89,7 @@ ThaDdb(
 
 | Method | Description |
 |--------|-------------|
-| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). Pass `fields={"attr": "DDB_TYPE"}` (e.g. `{"name": "S", "age": "N"}`) to extract specific typed attributes; without it all attributes are returned. |
+| `fetch_by_pk(table_name, partition_key, *, fields=None, key_name=None, key_type=None, dynamodb=None)` | Fetch a single item by partition key via `get_item`. Returns `{status, message, pk, table, data}`. `status` is `None` (item found) or `"error"` (item missing or AWS error). Pass `fields={"attr": "DDB_TYPE"}` (e.g. `{"name": "S", "age": "N"}`) to extract specific typed attributes; without it all attributes are returned. `table_name` accepts a full DynamoDB table ARN (`arn:aws:dynamodb:…:table/MyTable`) — the table name is extracted automatically. |
 | `batch_fetch_by_pk(rows, pk_col, *, table_name=None, table_name_col=None, key_name=None, key_type=None, fields=None, workers=1, dynamodb=None)` | Batch-fetch items by partition key via `batch_get_item` (chunks at 100). Each row must have `pk_col`. Provide exactly one of `table_name` (single table) or `table_name_col` (per-row table). Returns `{table: {pk: {status, message, pk, table, data}}}`. `status` is `None` (found) or `"error"` (missing or AWS error). Duplicate PKs are deduplicated before the fetch. Pass `fields={"attr": "DDB_TYPE"}` to extract specific typed attributes; without it all attributes are returned. Chunk-level errors are captured per-chunk; affected PKs get `status: "error"` while remaining chunks still return data. Pass `workers>1` to parallelize chunks across threads. |
 | `update_by_pk(table_name, partition_key, key_name, key_type, update_attr, update_type, update_value, *, increment_attr=None, commit=False, dynamodb=None)` | Update a single attribute with conditional check. Returns `{"pk", "status", ...}` where status is `updated`, `skipped`, `error`, or `dry_run`. |
 | `batch_update_by_pk(rows, pk_col, key_name, key_type, update_attr, update_type, value_col, *, table_name=None, table_name_col=None, increment_attr=None, workers=1, commit=False, dynamodb=None)` | Update an attribute for each row in a list. Provide exactly one of `table_name` (single table) or `table_name_col` (per-row table). Wraps `update_by_pk` per row. Pass `workers>1` for threading. Returns a list of per-row result dicts. |
@@ -90,6 +98,8 @@ ThaDdb(
 | `delete_by_pk(table_name, partition_key, key_name, key_type, *, commit=False, dynamodb=None)` | Delete one item with existence check. Returns `{"pk", "status"}`. |
 
 All write methods default to `commit=False` (dry run) — pass `commit=True` to execute. In dry-run mode the AWS call is skipped and `status` is `"dry_run"`.
+
+All methods that accept `table_name` also accept a full DynamoDB table ARN — the table name is extracted automatically.
 
 > `Scan` is intentionally not implemented — it reads every item in a table and burns read capacity proportional to table size. Use raw boto3 for one-off table scans.
 
@@ -118,6 +128,10 @@ ThaS3(
 | `download_file(bucket=None, key=None, *, uri=None, local_path=None, encoding=None, s3=None)` | Download an S3 object. Provide `uri` or both `bucket`+`key`. Without `local_path`, returns data in `result["data"]` as `str` (if `encoding` set) or `bytes`. With `local_path`, writes raw bytes to disk. Returns `{"bucket", "key", "status", "bytes"}`. |
 | `download_prefix(bucket, prefix="", *, local_dir=None, encoding=None, workers=1, s3=None)` | Download all objects under a prefix (lists then batch-downloads). Equivalent to `aws s3 cp --recursive`. With `local_dir`, files are written to disk preserving the key path structure. Returns a `list[dict]` of per-file results. |
 | `batch_download(rows, *, uri_col=None, key_col=None, bucket=None, bucket_col=None, local_dir=None, encoding=None, workers=1, s3=None)` | Download multiple S3 objects from a list of rows. Three modes: (1) `uri_col` — full `s3://` URI per row; (2) `key_col + bucket` — fixed bucket for all rows; (3) `key_col + bucket_col` — per-row bucket. With `local_dir`, files are written to disk preserving the key path structure. Pass `workers>1` to parallelize. Returns a `list[dict]` of per-file results; invalid URIs and download failures are captured per-row as `{"status": "error", "message": msg}` rather than raising. |
+| `object_exists(bucket=None, key=None, *, uri=None, s3=None)` | Check whether an S3 object exists via `head_object`. Provide `uri` or both `bucket`+`key`. Returns `True` if the object exists, `False` if it returns 404. Re-raises any other AWS error (e.g. 403 Access Denied). |
+| `copy_file(src_bucket=None, src_key=None, dst_bucket=None, dst_key=None, *, src_uri=None, dst_uri=None, commit=False, s3=None)` | Copy an S3 object within or between buckets via `copy_object`. Provide `src_uri`/`dst_uri` or the explicit bucket+key pairs. Returns `{"src_bucket", "src_key", "dst_bucket", "dst_key", "status"}`. |
+
+All `upload_file`, `download_file`, `delete_file`, `object_exists`, and `copy_file` methods accept a full S3 object ARN (`arn:aws:s3:::bucket/key`) in place of `uri`. All methods that accept a `bucket` argument also accept a bucket-only ARN (`arn:aws:s3:::bucket`) — the bucket name is extracted automatically.
 
 ### `ThaSSM`
 
@@ -136,9 +150,9 @@ ThaSSM(
 
 | Method | Description |
 |--------|-------------|
-| `read_param(path, *, with_decryption=False, ssm=None)` | Fetch a single SSM parameter value as a string. |
+| `read_param(path, *, with_decryption=False, ssm=None)` | Fetch a single SSM parameter value as a string. `path` accepts a full SSM parameter ARN (`arn:aws:ssm:…:parameter/my/path`) — the path is extracted automatically. |
 | `read_params_by_path(path_prefix, *, with_decryption=False, ssm=None)` | Fetch all parameters under a path prefix recursively. Returns `{name: value}`. Paginates automatically. |
-| `write_param(path, value, *, param_type="String", overwrite=True, commit=False, ssm=None)` | Write an SSM parameter. Returns `{"path", "status"}`. |
+| `write_param(path, value, *, param_type="String", overwrite=True, commit=False, ssm=None)` | Write an SSM parameter. Returns `{"path", "status"}`. `path` accepts a full SSM parameter ARN — the path is extracted automatically. |
 
 All methods set `self.rows` to their return value.
 

@@ -120,3 +120,40 @@ def test_write_param_custom_type_no_overwrite():
     mock_client.put_parameter.assert_called_once_with(
         Name="/app/secret", Value="s3cr3t", Type="SecureString", Overwrite=False
     )
+
+
+# --- ARN resolution ---
+
+_PARAM_ARN = "arn:aws:ssm:us-east-1:123456789012:parameter/my/app/secret"
+
+
+def test_resolve_param_path_plain():
+    assert ThaSSM._resolve_param_path("/my/param") == "/my/param"
+
+
+def test_resolve_param_path_arn():
+    assert ThaSSM._resolve_param_path(_PARAM_ARN) == "/my/app/secret"
+
+
+def test_read_param_arn():
+    mock_client = MagicMock()
+    mock_client.get_parameter.return_value = {"Parameter": {"Value": "secret-value"}}
+    ssm = ThaSSM()
+    ssm._ssm = mock_client
+    result = ssm.read_param(_PARAM_ARN)
+    assert result == "secret-value"
+    mock_client.get_parameter.assert_called_once_with(
+        Name="/my/app/secret", WithDecryption=False
+    )
+
+
+def test_write_param_arn():
+    mock_client = MagicMock()
+    mock_client.put_parameter.return_value = {}
+    ssm = ThaSSM()
+    ssm._ssm = mock_client
+    result = ssm.write_param(_PARAM_ARN, "value", commit=True)
+    assert result == {"path": "/my/app/secret", "status": "written"}
+    mock_client.put_parameter.assert_called_once_with(
+        Name="/my/app/secret", Value="value", Type="String", Overwrite=True
+    )
