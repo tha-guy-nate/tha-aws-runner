@@ -1034,3 +1034,108 @@ def test_batch_update_by_gsi_incr_col_without_increment_raises(gsi: ThaGsi) -> N
             update_attr="status", update_type="S", update_value="DONE",
             incr_col="view_count", dynamodb=c,
         )
+
+
+# --- skip_statuses ---
+
+def test_batch_query_skip_statuses_default(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    rows = [
+        {"email": "a@x.com", "row status": ""},
+        {"email": "b@x.com", "row status": "error"},
+        {"email": "c@x.com", "row status": "warning"},
+    ]
+    result = gsi.batch_query("users", "email-index", rows=rows, gsi_col="email", dynamodb=c)
+    assert set(result.results) == {"a@x.com"}
+    assert result.errors == {}
+
+
+def test_batch_query_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    rows = [
+        {"email": "a@x.com", "row status": "error"},
+        {"email": "b@x.com", "row status": "warning"},
+    ]
+    result = gsi.batch_query(
+        "users", "email-index", rows=rows, gsi_col="email",
+        skip_statuses=[], dynamodb=c,
+    )
+    assert set(result.results) == {"a@x.com", "b@x.com"}
+
+
+def test_batch_query_skip_statuses_custom_col(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    rows = [
+        {"email": "a@x.com", "state": "error"},
+        {"email": "b@x.com", "state": "ok"},
+    ]
+    result = gsi.batch_query(
+        "users", "email-index", rows=rows, gsi_col="email",
+        status_col="state", dynamodb=c,
+    )
+    assert set(result.results) == {"b@x.com"}
+
+
+def test_batch_count_skip_statuses_default(gsi: ThaGsi) -> None:
+    c = _count_client_fn(_TABLE_DESC)
+    rows = [
+        {"email": "ab", "row status": ""},
+        {"email": "abc", "row status": "error"},
+    ]
+    result = gsi.batch_count("users", "email-index", rows=rows, gsi_col="email", dynamodb=c)
+    assert set(result.results) == {"ab"}
+    assert result.errors == {}
+
+
+def test_batch_count_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
+    c = _count_client_fn(_TABLE_DESC)
+    rows = [
+        {"email": "ab", "row status": "error"},
+        {"email": "abc", "row status": "warning"},
+    ]
+    result = gsi.batch_count(
+        "users", "email-index", rows=rows, gsi_col="email",
+        skip_statuses=[], dynamodb=c,
+    )
+    assert set(result.results) == {"ab", "abc"}
+
+
+def test_batch_update_by_gsi_skip_statuses_default(gsi: ThaGsi) -> None:
+    c = _batch_upd_client(
+        _UPD_TABLE_DESC,
+        {"PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]},
+    )
+    rows = [
+        {"status": "PENDING", "row status": ""},
+        {"status": "REVIEW", "row status": "error"},
+        {"status": "HOLD", "row status": "warning"},
+    ]
+    result = gsi.batch_update_by_gsi(
+        "orders", "status-index",
+        rows=rows, gsi_col="status",
+        update_attr="status", update_type="S", update_value="DONE",
+        dynamodb=c,
+    )
+    assert set(result.results) == {"PENDING"}
+    assert result.errors == {}
+
+
+def test_batch_update_by_gsi_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
+    c = _batch_upd_client(
+        _UPD_TABLE_DESC,
+        {
+            "PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
+            "REVIEW": [{"order_id": {"S": "o2"}, "status": {"S": "REVIEW"}}],
+        },
+    )
+    rows = [
+        {"status": "PENDING", "row status": "error"},
+        {"status": "REVIEW", "row status": "warning"},
+    ]
+    result = gsi.batch_update_by_gsi(
+        "orders", "status-index",
+        rows=rows, gsi_col="status",
+        update_attr="status", update_type="S", update_value="DONE",
+        skip_statuses=[], dynamodb=c,
+    )
+    assert set(result.results) == {"PENDING", "REVIEW"}
