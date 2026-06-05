@@ -183,7 +183,12 @@ class ThaDdb(AWSBase):
         show_progress: bool = False,
         progress_desc: str | None = None,
         dynamodb: Any = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> dict[str, dict[str, dict]]:
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        rows = [r for r in rows if r.get(status_col) not in effective_skip]
+
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 
@@ -453,7 +458,12 @@ class ThaDdb(AWSBase):
         progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> list[dict]:
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        rows = [r for r in rows if r.get(status_col) not in effective_skip]
+
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 
@@ -511,7 +521,12 @@ class ThaDdb(AWSBase):
         progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> list[dict]:
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        rows = [r for r in rows if r.get(status_col) not in effective_skip]
+
         if (table_name is None) == (table_name_col is None):
             raise ValueError("Provide exactly one of table_name or table_name_col")
 

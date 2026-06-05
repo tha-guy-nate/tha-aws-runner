@@ -399,13 +399,16 @@ class ThaGsi(AWSBase):
         values: list[Any] | None,
         rows: list[dict[str, Any]] | None,
         gsi_col: str | None,
+        skip_statuses: list[str],
+        status_col: str,
     ) -> list[Any]:
         if values is not None and rows is not None:
             raise ValueError("Provide either values or rows, not both")
         if rows is not None:
             if gsi_col is None:
                 raise ValueError("gsi_col is required when rows is provided")
-            return [row[gsi_col] for row in rows]
+            filtered = [r for r in rows if r.get(status_col) not in skip_statuses]
+            return [row[gsi_col] for row in filtered]
         if values is not None:
             return values
         raise ValueError("Provide either values or rows")
@@ -427,8 +430,13 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> BatchQueryResult:
-        resolved_values = self._resolve_batch_values(values, rows, gsi_col)
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        resolved_values = self._resolve_batch_values(
+            values, rows, gsi_col, effective_skip, status_col
+        )
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
@@ -483,8 +491,13 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> BatchCountResult:
-        resolved_values = self._resolve_batch_values(values, rows, gsi_col)
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        resolved_values = self._resolve_batch_values(
+            values, rows, gsi_col, effective_skip, status_col
+        )
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
@@ -545,12 +558,17 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        skip_statuses: list[str] | None = None,
+        status_col: str = "row status",
     ) -> BatchUpdateResult:
         if increment and incr_col is None:
             raise ValueError("incr_col is required when increment=True")
         if incr_col is not None and not increment:
             raise ValueError("incr_col requires increment=True")
-        resolved_values = self._resolve_batch_values(values, rows, gsi_col)
+        effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
+        resolved_values = self._resolve_batch_values(
+            values, rows, gsi_col, effective_skip, status_col
+        )
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type = self._resolve_gsi_keys(
