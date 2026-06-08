@@ -315,6 +315,7 @@ class ThaS3(AWSBase):
         bucket: str | None = None,
         bucket_col: str | None = None,
         local_dir: str | None = None,
+        local_path_col: str | None = None,
         encoding: str | None = None,
         workers: int = 1,
         show_progress: bool = False,
@@ -327,6 +328,8 @@ class ThaS3(AWSBase):
             raise ValueError("Provide either uri_col or key_col")
         if key_col is not None and (bucket is None) == (bucket_col is None):
             raise ValueError("Provide exactly one of bucket or bucket_col when using key_col")
+        if local_dir is not None and local_path_col is not None:
+            raise ValueError("Provide local_dir OR local_path_col, not both")
 
         if bucket is not None:
             bucket = self._resolve_bucket(bucket)
@@ -347,7 +350,18 @@ class ThaS3(AWSBase):
                 results[idx] = {"status": "error", "message": str(exc)}
                 return
             local_path: str | None = None
-            if local_dir is not None:
+            if local_path_col is not None:
+                raw = row.get(local_path_col)
+                if not raw:
+                    results[idx] = {
+                        "bucket": b, "key": k, "status": "error",
+                        "message": f"missing {local_path_col} on row",
+                    }
+                    return
+                dest = Path(str(raw))
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                local_path = str(dest)
+            elif local_dir is not None:
                 dest = Path(local_dir) / k
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 local_path = str(dest)
@@ -358,6 +372,7 @@ class ThaS3(AWSBase):
             except Exception as exc:
                 results[idx] = {"bucket": b, "key": k, "status": "error", "message": str(exc)}
 
+        _label = f"{progress_desc}: downloading files" if progress_desc else "downloading files"
         if workers > 1:
             def _threaded(args: tuple[int, dict]) -> None:
                 idx, row = args
@@ -367,12 +382,12 @@ class ThaS3(AWSBase):
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 list(self._progress_iter(
                     pool.map(_threaded, enumerate(rows)),
-                    total=len(rows), desc=progress_desc, show_progress=show_progress,
+                    total=len(rows), desc=_label, show_progress=show_progress,
                 ))
         else:
             single_client = self._client(s3)
             for idx, row in self._progress_iter(
-                enumerate(rows), total=len(rows), desc=progress_desc, show_progress=show_progress,
+                enumerate(rows), total=len(rows), desc=_label, show_progress=show_progress,
             ):
                 _one(idx, row, single_client)
 
