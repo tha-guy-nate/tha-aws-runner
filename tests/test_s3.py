@@ -406,6 +406,40 @@ def test_batch_download_key_col_requires_bucket_or_bucket_col(mock_s3_client):
         s3.batch_download([{"key": "a.csv"}], key_col="key")
 
 
+def test_batch_download_local_path_col_honored(mock_s3_client, tmp_path):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"content")}
+    s3 = make_s3(mock_s3_client)
+    dest = tmp_path / "custom" / "out.csv"
+    rows = [{"uri": "s3://my-bucket/a.csv", "out": str(dest)}]
+    result = s3.batch_download(rows, uri_col="uri", local_path_col="out")
+    assert result[0]["status"] == "downloaded"
+    assert dest.read_bytes() == b"content"
+
+
+def test_batch_download_local_path_col_missing_value_is_row_error(mock_s3_client):
+    mock_s3_client.get_object.return_value = {"Body": BytesIO(b"ok")}
+    s3 = make_s3(mock_s3_client)
+    rows = [
+        {"uri": "s3://my-bucket/good.csv", "out": ""},
+        {"uri": "s3://my-bucket/also-good.csv", "out": ""},
+    ]
+    result = s3.batch_download(rows, uri_col="uri", local_path_col="out")
+    assert result[0]["status"] == "error"
+    assert "missing out" in result[0]["message"]
+    assert result[1]["status"] == "error"
+
+
+def test_batch_download_local_path_col_and_local_dir_raises(mock_s3_client, tmp_path):
+    s3 = make_s3(mock_s3_client)
+    with pytest.raises(ValueError, match="not both"):
+        s3.batch_download(
+            [{"uri": "s3://b/k"}],
+            uri_col="uri",
+            local_dir=str(tmp_path),
+            local_path_col="out",
+        )
+
+
 # --- ARN resolution ---
 
 _BUCKET_ARN = "arn:aws:s3:::my-bucket"

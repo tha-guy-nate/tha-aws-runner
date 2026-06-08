@@ -455,12 +455,13 @@ class ThaGsi(AWSBase):
         results: dict[Any, list[dict[str, Any]]] = {}
         errors: dict[Any, Exception] = {}
 
+        _label = f"{progress_desc}: querying GSI" if progress_desc else "querying GSI"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_run, v): v for v in resolved_values}
             for future in self._progress_iter(
                 as_completed(futures),
                 total=len(futures),
-                desc=progress_desc,
+                desc=_label,
                 show_progress=show_progress,
             ):
                 v = futures[future]
@@ -516,12 +517,13 @@ class ThaGsi(AWSBase):
         results: dict[Any, int] = {}
         errors: dict[Any, Exception] = {}
 
+        _label = f"{progress_desc}: counting GSI" if progress_desc else "counting GSI"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_run, v): v for v in resolved_values}
             for future in self._progress_iter(
                 as_completed(futures),
                 total=len(futures),
-                desc=progress_desc,
+                desc=_label,
                 show_progress=show_progress,
             ):
                 v = futures[future]
@@ -622,12 +624,13 @@ class ThaGsi(AWSBase):
         upd_results: dict[Any, list[dict[str, Any]]] = {}
         errors: dict[Any, Exception] = {}
 
+        _label = f"{progress_desc}: updating by GSI" if progress_desc else "updating by GSI"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_run, v): v for v in resolved_values}
             for future in self._progress_iter(
                 as_completed(futures),
                 total=len(futures),
-                desc=progress_desc,
+                desc=_label,
                 show_progress=show_progress,
             ):
                 v = futures[future]
