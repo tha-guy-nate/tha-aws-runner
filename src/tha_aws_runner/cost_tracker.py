@@ -7,29 +7,32 @@ from typing import TYPE_CHECKING, Any
 from tha_aws_runner.ddb_pricing import rcu_price, wcu_price
 
 if TYPE_CHECKING:
-    from tha_aws_runner.aws_base import AWSClients
-    from tha_aws_runner.dynamodb import ThaDdb
+    from tha_aws_runner.aws_base import AWSBase, AWSClients
 
 
 class DdbCostTracker:
     """
-    Context manager that tallies DynamoDB RCU/WCU consumed across a ThaDdb run
-    and estimates USD cost.
+    Context manager that tallies DynamoDB RCU/WCU consumed across a run and
+    estimates USD cost. Accepts any AWSBase instance (ThaDdb, ThaGsi, etc.).
 
-    Hooks boto3 session events on every session used by ThaDdb — including
+    Hooks boto3 session events on every session used by the instance — including
     per-thread sessions created by ThreadPoolExecutor workers — so threaded
-    batch operations are counted correctly.
+    batch operations are counted correctly. Each instance tracks its own session;
+    pass the same instance you are calling operations on.
 
     Usage::
 
         with DdbCostTracker(ddb) as cost:
             ddb.batch_update_by_pk(..., workers=8, commit=True)
 
+        with DdbCostTracker(gsi) as cost:
+            gsi.batch_query(...)
+
         print(cost.summary())
         # {"usd": 0.0042, "rcu": 1200.0, "wcu": 340.0, "region": "us-east-1", "tables": {...}}
     """
 
-    def __init__(self, ddb: ThaDdb, *, region: str | None = None) -> None:
+    def __init__(self, ddb: AWSBase, *, region: str | None = None) -> None:
         self._ddb = ddb
         self._region: str = region or ddb.clients.session.region_name or "us-east-1"
         self._lock = threading.Lock()
@@ -111,7 +114,7 @@ class DdbCostTracker:
         tracker = self
         _orig: Any = type(self._ddb)._thread_clients
 
-        def _wrapped(ddb_self: ThaDdb) -> AWSClients:
+        def _wrapped(ddb_self: AWSBase) -> AWSClients:
             clients = _orig(ddb_self)
             tracker._hook(clients.session)
             return clients
