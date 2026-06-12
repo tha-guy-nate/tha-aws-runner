@@ -904,7 +904,7 @@ wheels = [
 
 [[package]]
 name = "tha-aws-runner"
-version = "0.1.11"
+version = "0.1.14"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
