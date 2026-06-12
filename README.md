@@ -156,6 +156,29 @@ result = gsi.update_by_gsi("orders", "status-index", "PENDING",
                             "status", "N", 1,
                             increment=True, incr_col="retry_count", commit=True)
 
+# Cost tracking — estimate DynamoDB cost for a block of operations
+from tha_aws_runner import DdbCostTracker
+
+ddb = ThaDdb(region="us-east-1")
+with DdbCostTracker(ddb) as cost:
+    ddb.batch_fetch_by_pk(rows, pk_col="id", table_name="users", key_name="id", key_type="S", workers=8)
+    ddb.batch_update_by_pk(rows, pk_col="id", key_name="id", key_type="S",
+                           update_attr="status", update_type="S", value_col="status",
+                           table_name="users", workers=8, commit=True)
+print(cost.summary())
+# {"usd": 0.004275, "rcu": 12000.0, "wcu": 2100.0, "region": "us-east-1",
+#  "tables": {"users": {"rcu": 12000.0, "wcu": 2100.0, "usd": 0.004275}}}
+
+# Cost tracking — accumulate across multiple blocks (script-run total)
+tracker = DdbCostTracker(ddb)
+with tracker:
+    ddb.batch_fetch_by_pk(rows, pk_col="id", table_name="students", key_name="id", key_type="S")
+with tracker:
+    ddb.batch_update_by_pk(rows, pk_col="id", key_name="id", key_type="S",
+                           update_attr="status", update_type="S", value_col="status",
+                           table_name="enrollments", workers=8, commit=True)
+print(tracker.summary())  # totals both operations
+
 # GSI — batch update: flat values list (dry run by default)
 result = gsi.batch_update_by_gsi(
     "orders", "status-index", ["PENDING", "REVIEW"],
@@ -348,6 +371,22 @@ All four service classes (`ThaDdb`, `ThaS3`, `ThaSSM`, `ThaGsi`) accept the same
 ```python
 from tha_aws_runner import BatchCountResult, BatchQueryResult, BatchUpdateResult
 ```
+
+### `DdbCostTracker`
+
+```python
+DdbCostTracker(ddb: ThaDdb, *, region: str | None = None)
+```
+
+Context manager that tallies DynamoDB RCU/WCU consumed during a block of `ThaDdb` operations and estimates the on-demand USD cost. Hooks boto3 session events — including per-thread sessions created by `ThreadPoolExecutor` workers — so threaded batch operations are counted correctly. Makes no extra API calls; it reads the `ConsumedCapacity` metadata AWS returns on every operation when `ReturnConsumedCapacity=TOTAL` is requested.
+
+`region` defaults to the region of the `ThaDdb` instance. Used only for pricing lookups; supported regions are `us-east-1`, `us-east-2`, `us-west-1`, `us-west-2`, `ca-central-1`, `eu-west-1`, `eu-west-2`, `eu-west-3`, `eu-central-1`, `eu-north-1`, `ap-southeast-1`, `ap-southeast-2`, `ap-northeast-1`, `ap-northeast-2`, `ap-south-1`, `sa-east-1`. Unknown regions fall back to `us-east-1` pricing.
+
+| Method | Description |
+|--------|-------------|
+| `summary() -> dict` | Returns `{"usd": float, "rcu": float, "wcu": float, "region": str, "tables": {name: {"rcu": float, "wcu": float, "usd": float}}}`. Thread-safe; safe to call during or after the `with` block. |
+
+Reuse the same `DdbCostTracker` instance across multiple `with` blocks to accumulate a script-run total — the counters are never reset on exit, only on `__init__`.
 
 ## Alternatives
 
