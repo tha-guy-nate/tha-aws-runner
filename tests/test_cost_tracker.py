@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from tha_aws_runner.cost_tracker import DdbCostTracker
 from tha_aws_runner.ddb_pricing import rcu_price, wcu_price
 from tha_aws_runner.dynamodb import ThaDdb
+from tha_aws_runner.gsi import ThaGsi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -280,6 +281,18 @@ def test_thread_clients_wrapper_hooks_new_session() -> None:
     thread_emitter = thread_sess._session.get_component.return_value
     assert thread_emitter.register.call_count == 2
 
+    tracker.__exit__(None, None, None)
+
+
+def test_accepts_gsi_instance() -> None:
+    gsi = ThaGsi(region="us-east-1")
+    mock_sess = _mock_session()
+    gsi.clients.session = mock_sess
+
+    tracker = DdbCostTracker(gsi)
+    tracker.__enter__()
+    emitter = mock_sess._session.get_component.return_value
+    assert emitter.register.call_count == 2
     tracker.__exit__(None, None, None)
 
 
