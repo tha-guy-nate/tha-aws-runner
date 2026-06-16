@@ -9,6 +9,7 @@ from tha_aws_runner.gsi import ThaGsi
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_ddb() -> ThaDdb:
     ddb = ThaDdb(region="us-east-1")
     return ddb
@@ -23,6 +24,7 @@ def make_tracker(ddb: ThaDdb | None = None, region: str = "us-east-1") -> DdbCos
 # ---------------------------------------------------------------------------
 # ddb_pricing
 # ---------------------------------------------------------------------------
+
 
 def test_rcu_price_known_region() -> None:
     assert rcu_price("us-east-1") == 0.25 / 1_000_000
@@ -47,6 +49,7 @@ def test_rcu_price_regional_premium() -> None:
 # ---------------------------------------------------------------------------
 # _inject
 # ---------------------------------------------------------------------------
+
 
 def test_inject_adds_key() -> None:
     tracker = make_tracker()
@@ -73,13 +76,18 @@ def test_inject_does_not_override_indexes() -> None:
 # _capture
 # ---------------------------------------------------------------------------
 
+
 def test_capture_single_table() -> None:
     tracker = make_tracker()
-    tracker._capture({
-        "ConsumedCapacity": {
-            "TableName": "my_table", "ReadCapacityUnits": 10.0, "WriteCapacityUnits": 2.0
+    tracker._capture(
+        {
+            "ConsumedCapacity": {
+                "TableName": "my_table",
+                "ReadCapacityUnits": 10.0,
+                "WriteCapacityUnits": 2.0,
+            }
         }
-    })
+    )
     assert tracker._rcu == 10.0
     assert tracker._wcu == 2.0
     assert tracker._tables["my_table"] == {"rcu": 10.0, "wcu": 2.0}
@@ -87,12 +95,24 @@ def test_capture_single_table() -> None:
 
 def test_capture_accumulates_across_calls() -> None:
     tracker = make_tracker()
-    tracker._capture({
-        "ConsumedCapacity": {"TableName": "t1", "ReadCapacityUnits": 5.0, "WriteCapacityUnits": 1.0}
-    })
-    tracker._capture({
-        "ConsumedCapacity": {"TableName": "t1", "ReadCapacityUnits": 3.0, "WriteCapacityUnits": 0.0}
-    })
+    tracker._capture(
+        {
+            "ConsumedCapacity": {
+                "TableName": "t1",
+                "ReadCapacityUnits": 5.0,
+                "WriteCapacityUnits": 1.0,
+            }
+        }
+    )
+    tracker._capture(
+        {
+            "ConsumedCapacity": {
+                "TableName": "t1",
+                "ReadCapacityUnits": 3.0,
+                "WriteCapacityUnits": 0.0,
+            }
+        }
+    )
     assert tracker._rcu == 8.0
     assert tracker._wcu == 1.0
     assert tracker._tables["t1"] == {"rcu": 8.0, "wcu": 1.0}
@@ -100,12 +120,14 @@ def test_capture_accumulates_across_calls() -> None:
 
 def test_capture_batch_list_response() -> None:
     tracker = make_tracker()
-    tracker._capture({
-        "ConsumedCapacity": [
-            {"TableName": "t1", "ReadCapacityUnits": 4.0, "WriteCapacityUnits": 0.0},
-            {"TableName": "t2", "ReadCapacityUnits": 0.0, "WriteCapacityUnits": 6.0},
-        ]
-    })
+    tracker._capture(
+        {
+            "ConsumedCapacity": [
+                {"TableName": "t1", "ReadCapacityUnits": 4.0, "WriteCapacityUnits": 0.0},
+                {"TableName": "t2", "ReadCapacityUnits": 0.0, "WriteCapacityUnits": 6.0},
+            ]
+        }
+    )
     assert tracker._rcu == 4.0
     assert tracker._wcu == 6.0
     assert tracker._tables["t1"]["rcu"] == 4.0
@@ -114,12 +136,14 @@ def test_capture_batch_list_response() -> None:
 
 def test_capture_multiple_tables_tracked_separately() -> None:
     tracker = make_tracker()
-    tracker._capture({
-        "ConsumedCapacity": [
-            {"TableName": "a", "ReadCapacityUnits": 1.0, "WriteCapacityUnits": 0.0},
-            {"TableName": "b", "ReadCapacityUnits": 2.0, "WriteCapacityUnits": 0.0},
-        ]
-    })
+    tracker._capture(
+        {
+            "ConsumedCapacity": [
+                {"TableName": "a", "ReadCapacityUnits": 1.0, "WriteCapacityUnits": 0.0},
+                {"TableName": "b", "ReadCapacityUnits": 2.0, "WriteCapacityUnits": 0.0},
+            ]
+        }
+    )
     assert tracker._tables["a"]["rcu"] == 1.0
     assert tracker._tables["b"]["rcu"] == 2.0
 
@@ -149,14 +173,13 @@ def test_capture_missing_units_default_to_zero() -> None:
 # summary()
 # ---------------------------------------------------------------------------
 
+
 def test_summary_usd_calculation() -> None:
     tracker = make_tracker(region="us-east-1")
     tracker._rcu = 1_000_000.0
     tracker._wcu = 1_000_000.0
     result = tracker.summary()
-    expected = round(
-        1_000_000 * rcu_price("us-east-1") + 1_000_000 * wcu_price("us-east-1"), 6
-    )
+    expected = round(1_000_000 * rcu_price("us-east-1") + 1_000_000 * wcu_price("us-east-1"), 6)
     assert result["usd"] == expected
     assert result["rcu"] == 1_000_000.0
     assert result["wcu"] == 1_000_000.0
@@ -198,6 +221,7 @@ def test_summary_does_not_mutate_internal_tables() -> None:
 # ---------------------------------------------------------------------------
 # Context manager — hook/unhook
 # ---------------------------------------------------------------------------
+
 
 def _mock_session() -> MagicMock:
     session = MagicMock()
@@ -302,11 +326,15 @@ def test_context_manager_via_with() -> None:
     ddb.clients.session = mock_sess
 
     with DdbCostTracker(ddb) as cost:
-        cost._capture({
-            "ConsumedCapacity": {
-                "TableName": "t", "ReadCapacityUnits": 1.0, "WriteCapacityUnits": 1.0
+        cost._capture(
+            {
+                "ConsumedCapacity": {
+                    "TableName": "t",
+                    "ReadCapacityUnits": 1.0,
+                    "WriteCapacityUnits": 1.0,
+                }
             }
-        })
+        )
 
     result = cost.summary()
     assert result["rcu"] == 1.0

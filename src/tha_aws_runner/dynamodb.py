@@ -31,11 +31,14 @@ class ThaDdb(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
-    _THROTTLE_CODES = frozenset({
-        "ProvisionedThroughputExceededException",
-        "ThrottlingException",
-        "RequestLimitExceeded",
-    })
+
+    _THROTTLE_CODES = frozenset(
+        {
+            "ProvisionedThroughputExceededException",
+            "ThrottlingException",
+            "RequestLimitExceeded",
+        }
+    )
 
     @staticmethod
     def _is_throttled(code: str | None) -> bool:
@@ -216,8 +219,7 @@ class ThaDdb(AWSBase):
         records_dict: dict[str, dict[str, dict]] = {}
         found_ids: set[tuple[str, str]] = set()
         chunks = [
-            unique_pairs[i : i + MAX_BATCH_GET]
-            for i in range(0, len(unique_pairs), MAX_BATCH_GET)
+            unique_pairs[i : i + MAX_BATCH_GET] for i in range(0, len(unique_pairs), MAX_BATCH_GET)
         ]
 
         def _absorb(
@@ -259,8 +261,11 @@ class ThaDdb(AWSBase):
                 for tbl, pk in chunk_pairs:
                     local_found.add((tbl, pk))
                     local_records.setdefault(tbl, {})[pk] = {
-                        "status": "error", "message": msg,
-                        "pk": pk, "table": tbl, "data": None,
+                        "status": "error",
+                        "message": msg,
+                        "pk": pk,
+                        "table": tbl,
+                        "data": None,
                     }
                 return local_records, local_found
 
@@ -282,8 +287,11 @@ class ThaDdb(AWSBase):
                     for tbl, pk in unprocessed_pairs:
                         local_found.add((tbl, pk))
                         local_records.setdefault(tbl, {})[pk] = {
-                            "status": "error", "message": retry_msg,
-                            "pk": pk, "table": tbl, "data": None,
+                            "status": "error",
+                            "message": retry_msg,
+                            "pk": pk,
+                            "table": tbl,
+                            "data": None,
                         }
                     return local_records, local_found
                 _absorb(response.get("Responses", {}), local_records, local_found)
@@ -298,7 +306,9 @@ class ThaDdb(AWSBase):
                         local_records.setdefault(tbl, {})[pk] = {
                             "status": "error",
                             "message": f"Unprocessed after {retries} retries",
-                            "pk": pk, "table": tbl, "data": None,
+                            "pk": pk,
+                            "table": tbl,
+                            "data": None,
                         }
 
             return local_records, local_found
@@ -312,6 +322,7 @@ class ThaDdb(AWSBase):
 
         _label = f"{progress_desc}: fetching by pk" if progress_desc else "fetching by pk"
         if workers > 1:
+
             def _threaded(
                 chunk_pairs: list[tuple[str, str]],
             ) -> tuple[dict[str, dict[str, dict]], set[tuple[str, str]]]:
@@ -321,13 +332,18 @@ class ThaDdb(AWSBase):
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 for lr, lf in self._progress_iter(
                     pool.map(_threaded, chunks),
-                    total=len(chunks), desc=_label, show_progress=show_progress,
+                    total=len(chunks),
+                    desc=_label,
+                    show_progress=show_progress,
                 ):
                     _merge(lr, lf)
         else:
             client = self._client(dynamodb)
             for chunk in self._progress_iter(
-                chunks, total=len(chunks), desc=_label, show_progress=show_progress,
+                chunks,
+                total=len(chunks),
+                desc=_label,
+                show_progress=show_progress,
             ):
                 _merge(*_process_chunk(chunk, client))
 
@@ -336,7 +352,9 @@ class ThaDdb(AWSBase):
                 records_dict.setdefault(tbl, {})[pk] = {
                     "status": "error",
                     "message": "Item not found",
-                    "pk": pk, "table": tbl, "data": None,
+                    "pk": pk,
+                    "table": tbl,
+                    "data": None,
                 }
 
         self.rows = records_dict
@@ -424,7 +442,11 @@ class ThaDdb(AWSBase):
 
                 if self._is_throttled(code):
                     if attempt == MAX_RETRIES:
-                        result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
+                        result = {
+                            "pk": partition_key,
+                            "status": "error",
+                            "message": f"{code}: {msg}",
+                        }
                         if _set_rows:
                             self.rows = result
                         return result
@@ -475,6 +497,7 @@ class ThaDdb(AWSBase):
 
         _label = f"{progress_desc}: updating by pk" if progress_desc else "updating by pk"
         if workers > 1:
+
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
@@ -483,26 +506,50 @@ class ThaDdb(AWSBase):
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
-                    tbl, pk, key_name, key_type, update_attr, update_type, val,
-                    increment_attr=increment_attr, commit=commit, dynamodb=client, _set_rows=False,
+                    tbl,
+                    pk,
+                    key_name,
+                    key_type,
+                    update_attr,
+                    update_type,
+                    val,
+                    increment_attr=increment_attr,
+                    commit=commit,
+                    dynamodb=client,
+                    _set_rows=False,
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(self._progress_iter(
-                    pool.map(_process, enumerate(rows)),
-                    total=len(rows), desc=_label, show_progress=show_progress,
-                ))
+                list(
+                    self._progress_iter(
+                        pool.map(_process, enumerate(rows)),
+                        total=len(rows),
+                        desc=_label,
+                        show_progress=show_progress,
+                    )
+                )
         else:
             for idx, row in self._progress_iter(
-                enumerate(rows), total=len(rows), desc=_label, show_progress=show_progress,
+                enumerate(rows),
+                total=len(rows),
+                desc=_label,
+                show_progress=show_progress,
             ):
                 _raw = str(row.get(table_name_col) or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
                 results[idx] = self.update_by_pk(
-                    tbl, pk, key_name, key_type, update_attr, update_type, val,
-                    increment_attr=increment_attr, commit=commit, dynamodb=dynamodb,
+                    tbl,
+                    pk,
+                    key_name,
+                    key_type,
+                    update_attr,
+                    update_type,
+                    val,
+                    increment_attr=increment_attr,
+                    commit=commit,
+                    dynamodb=dynamodb,
                     _set_rows=False,
                 )
 
@@ -539,6 +586,7 @@ class ThaDdb(AWSBase):
 
         _label = f"{progress_desc}: deleting by pk" if progress_desc else "deleting by pk"
         if workers > 1:
+
             def _process(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
@@ -546,24 +594,41 @@ class ThaDdb(AWSBase):
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
-                    tbl, pk, key_name, key_type, commit=commit, dynamodb=client,
+                    tbl,
+                    pk,
+                    key_name,
+                    key_type,
+                    commit=commit,
+                    dynamodb=client,
                     _set_rows=False,
                 )
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(self._progress_iter(
-                    pool.map(_process, enumerate(rows)),
-                    total=len(rows), desc=_label, show_progress=show_progress,
-                ))
+                list(
+                    self._progress_iter(
+                        pool.map(_process, enumerate(rows)),
+                        total=len(rows),
+                        desc=_label,
+                        show_progress=show_progress,
+                    )
+                )
         else:
             for idx, row in self._progress_iter(
-                enumerate(rows), total=len(rows), desc=_label, show_progress=show_progress,
+                enumerate(rows),
+                total=len(rows),
+                desc=_label,
+                show_progress=show_progress,
             ):
                 _raw = str(row.get(table_name_col) or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
-                    tbl, pk, key_name, key_type, commit=commit, dynamodb=dynamodb,
+                    tbl,
+                    pk,
+                    key_name,
+                    key_type,
+                    commit=commit,
+                    dynamodb=dynamodb,
                     _set_rows=False,
                 )
 
@@ -671,14 +736,22 @@ class ThaDdb(AWSBase):
                 msg = e.response.get("Error", {}).get("Message")
 
                 if code == "ConditionalCheckFailedException":
-                    result = {"pk": partition_key, "status": "skipped", "message": "Item does not exist"}  # noqa: E501
+                    result = {
+                        "pk": partition_key,
+                        "status": "skipped",
+                        "message": "Item does not exist",
+                    }
                     if _set_rows:
                         self.rows = result
                     return result
 
                 if self._is_throttled(code):
                     if attempt == MAX_RETRIES:
-                        result = {"pk": partition_key, "status": "error", "message": f"{code}: {msg}"}  # noqa: E501
+                        result = {
+                            "pk": partition_key,
+                            "status": "error",
+                            "message": f"{code}: {msg}",
+                        }
                         if _set_rows:
                             self.rows = result
                         return result

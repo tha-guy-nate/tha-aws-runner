@@ -76,7 +76,10 @@ def test_upload_file_from_bytes(mock_s3_client):
     s3 = make_s3(mock_s3_client)
     result = s3.upload_file("my-bucket", "path/to/key.csv", data=b"hello,world", commit=True)
     assert result == {
-        "bucket": "my-bucket", "key": "path/to/key.csv", "status": "uploaded", "bytes": 11
+        "bucket": "my-bucket",
+        "key": "path/to/key.csv",
+        "status": "uploaded",
+        "bytes": 11,
     }
     assert s3.rows is result
     mock_s3_client.put_object.assert_called_once_with(
@@ -460,7 +463,8 @@ def test_resolve_bucket_from_object_arn():
 
 def test_resolve_uri_or_arn_s3_uri():
     assert ThaS3._resolve_uri_or_arn("s3://my-bucket/reports/jan.csv") == (
-        "my-bucket", "reports/jan.csv"
+        "my-bucket",
+        "reports/jan.csv",
     )
 
 
@@ -545,6 +549,7 @@ def test_object_exists_true(mock_s3_client):
 
 def test_object_exists_false(mock_s3_client):
     from botocore.exceptions import ClientError
+
     err = ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
     mock_s3_client.head_object.side_effect = err
     s3 = make_s3(mock_s3_client)
@@ -553,6 +558,7 @@ def test_object_exists_false(mock_s3_client):
 
 def test_object_exists_other_error_raises(mock_s3_client):
     from botocore.exceptions import ClientError
+
     err = ClientError({"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject")
     mock_s3_client.head_object.side_effect = err
     s3 = make_s3(mock_s3_client)
@@ -571,9 +577,7 @@ def test_object_exists_via_arn(mock_s3_client):
     mock_s3_client.head_object.return_value = {}
     s3 = make_s3(mock_s3_client)
     assert s3.object_exists(uri=_OBJECT_ARN) is True
-    mock_s3_client.head_object.assert_called_once_with(
-        Bucket="my-bucket", Key="reports/jan.csv"
-    )
+    mock_s3_client.head_object.assert_called_once_with(Bucket="my-bucket", Key="reports/jan.csv")
 
 
 def test_object_exists_no_bucket_or_uri_raises(mock_s3_client):
@@ -589,8 +593,10 @@ def test_copy_file_dry_run(mock_s3_client):
     s3 = make_s3(mock_s3_client)
     result = s3.copy_file("src-bucket", "src/key.csv", "dst-bucket", "dst/key.csv")
     assert result == {
-        "src_bucket": "src-bucket", "src_key": "src/key.csv",
-        "dst_bucket": "dst-bucket", "dst_key": "dst/key.csv",
+        "src_bucket": "src-bucket",
+        "src_key": "src/key.csv",
+        "dst_bucket": "dst-bucket",
+        "dst_key": "dst/key.csv",
         "status": "dry_run",
     }
     mock_s3_client.copy_object.assert_not_called()
@@ -600,12 +606,12 @@ def test_copy_file_dry_run(mock_s3_client):
 def test_copy_file_commit(mock_s3_client):
     mock_s3_client.copy_object.return_value = {}
     s3 = make_s3(mock_s3_client)
-    result = s3.copy_file(
-        "src-bucket", "src/key.csv", "dst-bucket", "dst/key.csv", commit=True
-    )
+    result = s3.copy_file("src-bucket", "src/key.csv", "dst-bucket", "dst/key.csv", commit=True)
     assert result == {
-        "src_bucket": "src-bucket", "src_key": "src/key.csv",
-        "dst_bucket": "dst-bucket", "dst_key": "dst/key.csv",
+        "src_bucket": "src-bucket",
+        "src_key": "src/key.csv",
+        "dst_bucket": "dst-bucket",
+        "dst_key": "dst/key.csv",
         "status": "copied",
     }
     mock_s3_client.copy_object.assert_called_once_with(

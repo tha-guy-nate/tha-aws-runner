@@ -11,8 +11,12 @@ def parse_arn(arn: str) -> dict[str, str | None]:
     All values are None if the ARN is malformed.
     """
     empty: dict[str, str | None] = {
-        "partition": None, "service": None, "region": None,
-        "account_id": None, "resource_type": None, "resource_id": None,
+        "partition": None,
+        "service": None,
+        "region": None,
+        "account_id": None,
+        "resource_type": None,
+        "resource_id": None,
     }
     try:
         parts = arn.split(":", 5)

@@ -198,9 +198,7 @@ class ThaGsi(AWSBase):
         if filter_values:
             conflicts |= set(filter_values) & _RESERVED
         if conflicts:
-            raise ValueError(
-                f"filter_names/filter_values use reserved placeholders: {conflicts}"
-            )
+            raise ValueError(f"filter_names/filter_values use reserved placeholders: {conflicts}")
 
         expr_names: dict[str, str] = {"#_pk": pk_name}
         expr_vals: dict[str, Any] = {":_pkv": _ddb_val(pk_type, value)}
@@ -278,13 +276,20 @@ class ThaGsi(AWSBase):
     ) -> list[dict[str, Any]]:
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
-        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
-            table_name, index_name, client
-        )
+        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(table_name, index_name, client)
         kwargs = self._build_query_kwargs(
-            table_name, index_name, value, pk_name, pk_type, sk_name, sk_type,
-            sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-            filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+            table_name,
+            index_name,
+            value,
+            pk_name,
+            pk_type,
+            sk_name,
+            sk_type,
+            sort_key_value=sort_key_value,
+            sort_key_op=sort_key_op,
+            filter_expr=filter_expr,
+            filter_names=filter_names,
+            filter_values=filter_values,
         )
         items = self._run_query(kwargs, client)
         self.rows = items
@@ -305,13 +310,20 @@ class ThaGsi(AWSBase):
     ) -> int:
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
-        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
-            table_name, index_name, client
-        )
+        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(table_name, index_name, client)
         kwargs = self._build_query_kwargs(
-            table_name, index_name, value, pk_name, pk_type, sk_name, sk_type,
-            sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-            filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+            table_name,
+            index_name,
+            value,
+            pk_name,
+            pk_type,
+            sk_name,
+            sk_type,
+            sort_key_value=sort_key_value,
+            sort_key_op=sort_key_op,
+            filter_expr=filter_expr,
+            filter_names=filter_names,
+            filter_values=filter_values,
         )
         total = self._run_count(kwargs, client)
         self.rows = total
@@ -350,10 +362,18 @@ class ThaGsi(AWSBase):
         )
 
         gsi_kwargs = self._build_query_kwargs(
-            table_name, index_name, value,
-            gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type,
-            sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-            filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+            table_name,
+            index_name,
+            value,
+            gsi_pk_name,
+            gsi_pk_type,
+            gsi_sk_name,
+            gsi_sk_type,
+            sort_key_value=sort_key_value,
+            sort_key_op=sort_key_op,
+            filter_expr=filter_expr,
+            filter_names=filter_names,
+            filter_values=filter_values,
         )
         items = self._run_query(gsi_kwargs, client)
 
@@ -446,9 +466,18 @@ class ThaGsi(AWSBase):
         def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
             client = self._client(dynamodb)
             kwargs = self._build_query_kwargs(
-                table_name, index_name, v, pk_name, pk_type, sk_name, sk_type,
-                sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-                filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+                table_name,
+                index_name,
+                v,
+                pk_name,
+                pk_type,
+                sk_name,
+                sk_type,
+                sort_key_value=sort_key_value,
+                sort_key_op=sort_key_op,
+                filter_expr=filter_expr,
+                filter_names=filter_names,
+                filter_values=filter_values,
             )
             return v, self._run_query(kwargs, client)
 
@@ -508,9 +537,18 @@ class ThaGsi(AWSBase):
         def _run(v: Any) -> tuple[Any, int]:
             client = self._client(dynamodb)
             kwargs = self._build_query_kwargs(
-                table_name, index_name, v, pk_name, pk_type, sk_name, sk_type,
-                sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-                filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+                table_name,
+                index_name,
+                v,
+                pk_name,
+                pk_type,
+                sk_name,
+                sk_type,
+                sort_key_value=sort_key_value,
+                sort_key_op=sort_key_op,
+                filter_expr=filter_expr,
+                filter_names=filter_names,
+                filter_values=filter_values,
             )
             return v, self._run_count(kwargs, client)
 
@@ -583,10 +621,18 @@ class ThaGsi(AWSBase):
         def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
             client = self._client(dynamodb)
             gsi_kwargs = self._build_query_kwargs(
-                table_name, index_name, v,
-                gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type,
-                sort_key_value=sort_key_value, sort_key_op=sort_key_op,
-                filter_expr=filter_expr, filter_names=filter_names, filter_values=filter_values,
+                table_name,
+                index_name,
+                v,
+                gsi_pk_name,
+                gsi_pk_type,
+                gsi_sk_name,
+                gsi_sk_type,
+                sort_key_value=sort_key_value,
+                sort_key_op=sort_key_op,
+                filter_expr=filter_expr,
+                filter_names=filter_names,
+                filter_values=filter_values,
             )
             items = self._run_query(gsi_kwargs, client)
 

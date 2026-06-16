@@ -142,9 +142,7 @@ def test_read_param_arn():
     ssm._thread_local.ssm = mock_client
     result = ssm.read_param(_PARAM_ARN)
     assert result == "secret-value"
-    mock_client.get_parameter.assert_called_once_with(
-        Name="/my/app/secret", WithDecryption=False
-    )
+    mock_client.get_parameter.assert_called_once_with(Name="/my/app/secret", WithDecryption=False)
 
 
 def test_write_param_arn():
