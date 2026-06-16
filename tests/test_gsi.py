@@ -67,6 +67,7 @@ def gsi() -> ThaGsi:
 
 # --- basic query ---
 
+
 def test_query_basic(gsi: ThaGsi) -> None:
     c = _client(
         _TABLE_DESC,
@@ -170,18 +171,21 @@ def test_resolve_gsi_keys_missing_attr_def_raises(gsi: ThaGsi) -> None:
 
 # --- sort key ---
 
+
 def test_query_sort_key_eq(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Items": []}])
-    gsi.query("orders", "user-date-index", "u1",
-              sort_key_value="2024-01-01", sort_key_op="=", dynamodb=c)
+    gsi.query(
+        "orders", "user-date-index", "u1", sort_key_value="2024-01-01", sort_key_op="=", dynamodb=c
+    )
     kce = c.query.call_args.kwargs["KeyConditionExpression"]
     assert kce == "#_pk = :_pkv AND #_sk = :_skv"
 
 
 def test_query_sort_key_gte(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Items": []}])
-    gsi.query("orders", "user-date-index", "u1",
-              sort_key_value="2024-01-01", sort_key_op=">=", dynamodb=c)
+    gsi.query(
+        "orders", "user-date-index", "u1", sort_key_value="2024-01-01", sort_key_op=">=", dynamodb=c
+    )
     kw = c.query.call_args.kwargs
     assert "#_pk = :_pkv AND #_sk >= :_skv" == kw["KeyConditionExpression"]
     assert kw["ExpressionAttributeValues"][":_skv"] == {"S": "2024-01-01"}
@@ -190,8 +194,14 @@ def test_query_sort_key_gte(gsi: ThaGsi) -> None:
 
 def test_query_sort_key_between(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Items": []}])
-    gsi.query("orders", "user-date-index", "u1",
-              sort_key_value=("2024-01-01", "2024-12-31"), sort_key_op="between", dynamodb=c)
+    gsi.query(
+        "orders",
+        "user-date-index",
+        "u1",
+        sort_key_value=("2024-01-01", "2024-12-31"),
+        sort_key_op="between",
+        dynamodb=c,
+    )
     kw = c.query.call_args.kwargs
     assert kw["KeyConditionExpression"] == "#_pk = :_pkv AND #_sk BETWEEN :_skv1 AND :_skv2"
     assert kw["ExpressionAttributeValues"][":_skv1"] == {"S": "2024-01-01"}
@@ -200,8 +210,14 @@ def test_query_sort_key_between(gsi: ThaGsi) -> None:
 
 def test_query_sort_key_begins_with(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Items": []}])
-    gsi.query("orders", "user-date-index", "u1",
-              sort_key_value="2024", sort_key_op="begins_with", dynamodb=c)
+    gsi.query(
+        "orders",
+        "user-date-index",
+        "u1",
+        sort_key_value="2024",
+        sort_key_op="begins_with",
+        dynamodb=c,
+    )
     kce = c.query.call_args.kwargs["KeyConditionExpression"]
     assert kce == "#_pk = :_pkv AND begins_with(#_sk, :_skv)"
 
@@ -209,37 +225,52 @@ def test_query_sort_key_begins_with(gsi: ThaGsi) -> None:
 def test_query_sort_key_on_gsi_without_sk_raises(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [])
     with pytest.raises(ValueError, match="has no sort key"):
-        gsi.query("users", "email-index", "a@x.com",
-                  sort_key_value="val", dynamodb=c)
+        gsi.query("users", "email-index", "a@x.com", sort_key_value="val", dynamodb=c)
 
 
 def test_query_invalid_sort_key_op_raises(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [])
     with pytest.raises(ValueError, match="Invalid sort_key_op"):
-        gsi.query("orders", "user-date-index", "u1",
-                  sort_key_value="2024", sort_key_op="LIKE", dynamodb=c)
+        gsi.query(
+            "orders", "user-date-index", "u1", sort_key_value="2024", sort_key_op="LIKE", dynamodb=c
+        )
 
 
 def test_query_between_non_tuple_raises(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [])
     with pytest.raises(ValueError, match="2-element tuple"):
-        gsi.query("orders", "user-date-index", "u1",
-                  sort_key_value="2024-01-01", sort_key_op="between", dynamodb=c)
+        gsi.query(
+            "orders",
+            "user-date-index",
+            "u1",
+            sort_key_value="2024-01-01",
+            sort_key_op="between",
+            dynamodb=c,
+        )
 
 
 def test_query_between_wrong_length_raises(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [])
     with pytest.raises(ValueError, match="2-element tuple"):
-        gsi.query("orders", "user-date-index", "u1",
-                  sort_key_value=("a", "b", "c"), sort_key_op="between", dynamodb=c)
+        gsi.query(
+            "orders",
+            "user-date-index",
+            "u1",
+            sort_key_value=("a", "b", "c"),
+            sort_key_op="between",
+            dynamodb=c,
+        )
 
 
 # --- filter expression ---
 
+
 def test_query_filter_expr(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [{"Items": []}])
     gsi.query(
-        "users", "email-index", "a@x.com",
+        "users",
+        "email-index",
+        "a@x.com",
         filter_expr="#s = :status",
         filter_names={"#s": "status"},
         filter_values={":status": {"S": "active"}},
@@ -254,7 +285,9 @@ def test_query_filter_expr(gsi: ThaGsi) -> None:
 def test_query_filter_expr_without_names(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [{"Items": []}])
     gsi.query(
-        "users", "email-index", "a@x.com",
+        "users",
+        "email-index",
+        "a@x.com",
         filter_expr="attribute_exists(deleted_at)",
         dynamodb=c,
     )
@@ -266,15 +299,18 @@ def test_query_filter_expr_without_names(gsi: ThaGsi) -> None:
 def test_query_filter_values_without_expr_raises(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [])
     with pytest.raises(ValueError, match="filter_values requires filter_expr"):
-        gsi.query("users", "email-index", "a@x.com",
-                  filter_values={":s": {"S": "active"}}, dynamodb=c)
+        gsi.query(
+            "users", "email-index", "a@x.com", filter_values={":s": {"S": "active"}}, dynamodb=c
+        )
 
 
 def test_query_filter_reserved_placeholder_raises(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [])
     with pytest.raises(ValueError, match="reserved placeholders"):
         gsi.query(
-            "users", "email-index", "a@x.com",
+            "users",
+            "email-index",
+            "a@x.com",
             filter_expr="#_pk = :x",
             filter_names={"#_pk": "something"},
             filter_values={":x": {"S": "v"}},
@@ -285,8 +321,11 @@ def test_query_filter_reserved_placeholder_raises(gsi: ThaGsi) -> None:
 def test_query_sort_key_and_filter_combined(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Items": []}])
     gsi.query(
-        "orders", "user-date-index", "u1",
-        sort_key_value="2024-01-01", sort_key_op=">=",
+        "orders",
+        "user-date-index",
+        "u1",
+        sort_key_value="2024-01-01",
+        sort_key_op=">=",
         filter_expr="#amt > :min",
         filter_names={"#amt": "amount"},
         filter_values={":min": {"N": "100"}},
@@ -300,6 +339,7 @@ def test_query_sort_key_and_filter_combined(gsi: ThaGsi) -> None:
 
 
 # --- count ---
+
 
 def test_count_basic(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [{"Count": 7}])
@@ -329,8 +369,9 @@ def test_count_pagination(gsi: ThaGsi) -> None:
 
 def test_count_with_sort_key(gsi: ThaGsi) -> None:
     c = _client(_SK_TABLE_DESC, [{"Count": 5}])
-    result = gsi.count("orders", "user-date-index", "u1",
-                       sort_key_value="2024-01-01", sort_key_op=">=", dynamodb=c)
+    result = gsi.count(
+        "orders", "user-date-index", "u1", sort_key_value="2024-01-01", sort_key_op=">=", dynamodb=c
+    )
     assert result == 5
     kw = c.query.call_args.kwargs
     assert "#_pk = :_pkv AND #_sk >= :_skv" == kw["KeyConditionExpression"]
@@ -340,7 +381,9 @@ def test_count_with_sort_key(gsi: ThaGsi) -> None:
 def test_count_with_filter(gsi: ThaGsi) -> None:
     c = _client(_TABLE_DESC, [{"Count": 2}])
     gsi.count(
-        "users", "email-index", "a@x.com",
+        "users",
+        "email-index",
+        "a@x.com",
         filter_expr="#s = :status",
         filter_names={"#s": "status"},
         filter_values={":status": {"S": "active"}},
@@ -352,6 +395,7 @@ def test_count_with_filter(gsi: ThaGsi) -> None:
 
 
 # --- batch_query ---
+
 
 def _client_fn(table_desc: dict) -> MagicMock:
     """Client whose query response is driven by the :_pkv value."""
@@ -426,6 +470,7 @@ def test_batch_query_bad_index_raises(gsi: ThaGsi) -> None:
 
 
 # --- batch_count ---
+
 
 def _count_client_fn(table_desc: dict) -> MagicMock:
     mock = MagicMock()
@@ -509,8 +554,12 @@ def test_batch_query_both_values_and_rows_raises(gsi: ThaGsi) -> None:
     c = _client_fn(_TABLE_DESC)
     with pytest.raises(ValueError, match="not both"):
         gsi.batch_query(
-            "users", "email-index",
-            ["a@x.com"], rows=[{"email": "a@x.com"}], gsi_col="email", dynamodb=c,
+            "users",
+            "email-index",
+            ["a@x.com"],
+            rows=[{"email": "a@x.com"}],
+            gsi_col="email",
+            dynamodb=c,
         )
 
 
@@ -523,8 +572,12 @@ def test_batch_query_neither_values_nor_rows_raises(gsi: ThaGsi) -> None:
 def test_batch_query_show_progress(gsi: ThaGsi) -> None:
     c = _client_fn(_TABLE_DESC)
     result = gsi.batch_query(
-        "users", "email-index", ["a@x.com", "b@x.com"],
-        dynamodb=c, show_progress=True, progress_desc="querying",
+        "users",
+        "email-index",
+        ["a@x.com", "b@x.com"],
+        dynamodb=c,
+        show_progress=True,
+        progress_desc="querying",
     )
     assert set(result.results) == {"a@x.com", "b@x.com"}
     assert result.errors == {}
@@ -549,8 +602,12 @@ def test_batch_count_both_values_and_rows_raises(gsi: ThaGsi) -> None:
     c = _count_client_fn(_TABLE_DESC)
     with pytest.raises(ValueError, match="not both"):
         gsi.batch_count(
-            "users", "email-index",
-            ["ab"], rows=[{"status": "ab"}], gsi_col="status", dynamodb=c,
+            "users",
+            "email-index",
+            ["ab"],
+            rows=[{"status": "ab"}],
+            gsi_col="status",
+            dynamodb=c,
         )
 
 
@@ -563,8 +620,12 @@ def test_batch_count_neither_values_nor_rows_raises(gsi: ThaGsi) -> None:
 def test_batch_count_show_progress(gsi: ThaGsi) -> None:
     c = _count_client_fn(_TABLE_DESC)
     result = gsi.batch_count(
-        "users", "email-index", ["ab", "abc"],
-        dynamodb=c, show_progress=True, progress_desc="counting",
+        "users",
+        "email-index",
+        ["ab", "abc"],
+        dynamodb=c,
+        show_progress=True,
+        progress_desc="counting",
     )
     assert result.results["ab"] == 2
     assert result.results["abc"] == 3
@@ -638,8 +699,14 @@ def test_update_by_gsi_commit(gsi: ThaGsi) -> None:
         [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
     )
     result = gsi.update_by_gsi(
-        "orders", "status-index", "PENDING", "status", "S", "SHIPPED",
-        commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "S",
+        "SHIPPED",
+        commit=True,
+        dynamodb=c,
     )
     assert result == [{"order_id": "o1", "status": "updated"}]
     c.update_item.assert_called_once_with(
@@ -660,8 +727,14 @@ def test_update_by_gsi_multiple_items(gsi: ThaGsi) -> None:
         ],
     )
     result = gsi.update_by_gsi(
-        "orders", "status-index", "PENDING", "status", "S", "SHIPPED",
-        commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "S",
+        "SHIPPED",
+        commit=True,
+        dynamodb=c,
     )
     assert len(result) == 2
     assert all(r["status"] == "updated" for r in result)
@@ -671,8 +744,14 @@ def test_update_by_gsi_multiple_items(gsi: ThaGsi) -> None:
 def test_update_by_gsi_empty(gsi: ThaGsi) -> None:
     c = _upd_client(_UPD_TABLE_DESC, [])
     result = gsi.update_by_gsi(
-        "orders", "status-index", "MISSING", "status", "S", "SHIPPED",
-        commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        "MISSING",
+        "status",
+        "S",
+        "SHIPPED",
+        commit=True,
+        dynamodb=c,
     )
     assert result == []
     c.update_item.assert_not_called()
@@ -695,8 +774,14 @@ def test_update_by_gsi_with_table_sort_key(gsi: ThaGsi) -> None:
         [{"user_id": {"S": "u1"}, "created_at": {"S": "2024-01-01"}, "type": {"S": "click"}}],
     )
     result = gsi.update_by_gsi(
-        "events", "type-index", "click", "processed", "S", "true",
-        commit=True, dynamodb=c,
+        "events",
+        "type-index",
+        "click",
+        "processed",
+        "S",
+        "true",
+        commit=True,
+        dynamodb=c,
     )
     assert result == [{"user_id": "u1", "created_at": "2024-01-01", "status": "updated"}]
     c.update_item.assert_called_once_with(
@@ -720,8 +805,14 @@ def test_update_by_gsi_partial_error(gsi: ThaGsi) -> None:
     mock.update_item.side_effect = [RuntimeError("throttled"), None]
 
     result = gsi.update_by_gsi(
-        "orders", "status-index", "PENDING", "status", "S", "SHIPPED",
-        commit=True, dynamodb=mock,
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "S",
+        "SHIPPED",
+        commit=True,
+        dynamodb=mock,
     )
     statuses = {r["order_id"]: r["status"] for r in result}
     assert statuses["o1"] == "error"
@@ -762,8 +853,12 @@ def test_batch_update_by_gsi_dry_run(gsi: ThaGsi) -> None:
         },
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING", "REVIEW"],
-        update_attr="status", update_type="S", update_value="PROCESSING",
+        "orders",
+        "status-index",
+        ["PENDING", "REVIEW"],
+        update_attr="status",
+        update_type="S",
+        update_value="PROCESSING",
         dynamodb=c,
     )
     assert isinstance(result, BatchUpdateResult)
@@ -782,9 +877,14 @@ def test_batch_update_by_gsi_commit(gsi: ThaGsi) -> None:
         },
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING", "REVIEW"],
-        update_attr="status", update_type="S", update_value="PROCESSING",
-        commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        ["PENDING", "REVIEW"],
+        update_attr="status",
+        update_type="S",
+        update_value="PROCESSING",
+        commit=True,
+        dynamodb=c,
     )
     assert result.errors == {}
     assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
@@ -795,9 +895,14 @@ def test_batch_update_by_gsi_commit(gsi: ThaGsi) -> None:
 def test_batch_update_by_gsi_empty_values(gsi: ThaGsi) -> None:
     c = _batch_upd_client(_UPD_TABLE_DESC, {})
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", [],
-        update_attr="status", update_type="S", update_value="DONE",
-        commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        [],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        commit=True,
+        dynamodb=c,
     )
     assert result.results == {}
     assert result.errors == {}
@@ -810,8 +915,12 @@ def test_batch_update_by_gsi_sets_rows(gsi: ThaGsi) -> None:
         {"PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]},
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING"],
-        update_attr="status", update_type="S", update_value="DONE",
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
         dynamodb=c,
     )
     assert gsi.rows is result
@@ -831,9 +940,14 @@ def test_batch_update_by_gsi_query_error_captured(gsi: ThaGsi) -> None:
     mock.update_item.return_value = {}
 
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING", "BAD"],
-        update_attr="status", update_type="S", update_value="DONE",
-        commit=True, dynamodb=mock,
+        "orders",
+        "status-index",
+        ["PENDING", "BAD"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        commit=True,
+        dynamodb=mock,
     )
     assert "PENDING" in result.results
     assert "BAD" in result.errors
@@ -852,9 +966,14 @@ def test_batch_update_by_gsi_per_item_error(gsi: ThaGsi) -> None:
     mock.update_item.side_effect = [RuntimeError("throttled"), None]
 
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING"],
-        update_attr="status", update_type="S", update_value="DONE",
-        commit=True, dynamodb=mock,
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        commit=True,
+        dynamodb=mock,
     )
     assert result.errors == {}
     item_statuses = {r["order_id"]: r["status"] for r in result.results["PENDING"]}
@@ -869,9 +988,13 @@ def test_batch_update_by_gsi_with_rows(gsi: ThaGsi) -> None:
     )
     rows = [{"status": "PENDING", "region": "us"}]
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index",
-        rows=rows, gsi_col="status",
-        update_attr="status", update_type="S", update_value="DONE",
+        "orders",
+        "status-index",
+        rows=rows,
+        gsi_col="status",
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
         dynamodb=c,
     )
     assert "PENDING" in result.results
@@ -884,9 +1007,15 @@ def test_batch_update_by_gsi_show_progress(gsi: ThaGsi) -> None:
         {"PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]},
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING"],
-        update_attr="status", update_type="S", update_value="DONE",
-        dynamodb=c, show_progress=True, progress_desc="updating",
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        dynamodb=c,
+        show_progress=True,
+        progress_desc="updating",
     )
     assert "PENDING" in result.results
     assert result.errors == {}
@@ -901,8 +1030,12 @@ def test_batch_update_by_gsi_table_desc_cached(gsi: ThaGsi) -> None:
         },
     )
     gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING", "REVIEW"],
-        update_attr="status", update_type="S", update_value="DONE",
+        "orders",
+        "status-index",
+        ["PENDING", "REVIEW"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
         dynamodb=c,
     )
     assert c.describe_table.call_count == 1
@@ -912,8 +1045,12 @@ def test_batch_update_by_gsi_bad_index_raises(gsi: ThaGsi) -> None:
     c = _batch_upd_client(_UPD_TABLE_DESC, {})
     with pytest.raises(ValueError, match="GSI 'bad-index' not found"):
         gsi.batch_update_by_gsi(
-            "orders", "bad-index", ["PENDING"],
-            update_attr="status", update_type="S", update_value="DONE",
+            "orders",
+            "bad-index",
+            ["PENDING"],
+            update_attr="status",
+            update_type="S",
+            update_value="DONE",
             dynamodb=c,
         )
 
@@ -924,8 +1061,16 @@ def test_update_by_gsi_increment(gsi: ThaGsi) -> None:
         [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
     )
     result = gsi.update_by_gsi(
-        "orders", "status-index", "PENDING", "status", "N", 1,
-        increment=True, incr_col="retry_count", commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "N",
+        1,
+        increment=True,
+        incr_col="retry_count",
+        commit=True,
+        dynamodb=c,
     )
     assert result == [{"order_id": "o1", "status": "updated"}]
     c.update_item.assert_called_once_with(
@@ -941,8 +1086,14 @@ def test_update_by_gsi_increment_missing_incr_col_raises(gsi: ThaGsi) -> None:
     c = _upd_client(_UPD_TABLE_DESC, [])
     with pytest.raises(ValueError, match="incr_col is required when increment=True"):
         gsi.update_by_gsi(
-            "orders", "status-index", "PENDING", "status", "N", 1,
-            increment=True, dynamodb=c,
+            "orders",
+            "status-index",
+            "PENDING",
+            "status",
+            "N",
+            1,
+            increment=True,
+            dynamodb=c,
         )
 
 
@@ -952,8 +1103,16 @@ def test_update_by_gsi_incr_col(gsi: ThaGsi) -> None:
         [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
     )
     result = gsi.update_by_gsi(
-        "orders", "status-index", "PENDING", "status", "N", 1,
-        increment=True, incr_col="view_count", commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "N",
+        1,
+        increment=True,
+        incr_col="view_count",
+        commit=True,
+        dynamodb=c,
     )
     assert result == [{"order_id": "o1", "status": "updated"}]
     c.update_item.assert_called_once_with(
@@ -969,8 +1128,14 @@ def test_update_by_gsi_incr_col_without_increment_raises(gsi: ThaGsi) -> None:
     c = _upd_client(_UPD_TABLE_DESC, [])
     with pytest.raises(ValueError, match="incr_col requires increment=True"):
         gsi.update_by_gsi(
-            "orders", "status-index", "PENDING", "status", "S", "SHIPPED",
-            incr_col="view_count", dynamodb=c,
+            "orders",
+            "status-index",
+            "PENDING",
+            "status",
+            "S",
+            "SHIPPED",
+            incr_col="view_count",
+            dynamodb=c,
         )
 
 
@@ -980,9 +1145,16 @@ def test_batch_update_by_gsi_increment(gsi: ThaGsi) -> None:
         {"PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]},
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING"],
-        update_attr="status", update_type="N", update_value=1,
-        increment=True, incr_col="retry_count", commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="N",
+        update_value=1,
+        increment=True,
+        incr_col="retry_count",
+        commit=True,
+        dynamodb=c,
     )
     assert result.errors == {}
     assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
@@ -999,9 +1171,14 @@ def test_batch_update_by_gsi_increment_missing_incr_col_raises(gsi: ThaGsi) -> N
     c = _batch_upd_client(_UPD_TABLE_DESC, {})
     with pytest.raises(ValueError, match="incr_col is required when increment=True"):
         gsi.batch_update_by_gsi(
-            "orders", "status-index", ["PENDING"],
-            update_attr="status", update_type="N", update_value=1,
-            increment=True, dynamodb=c,
+            "orders",
+            "status-index",
+            ["PENDING"],
+            update_attr="status",
+            update_type="N",
+            update_value=1,
+            increment=True,
+            dynamodb=c,
         )
 
 
@@ -1011,9 +1188,16 @@ def test_batch_update_by_gsi_incr_col(gsi: ThaGsi) -> None:
         {"PENDING": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]},
     )
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index", ["PENDING"],
-        update_attr="status", update_type="N", update_value=1,
-        increment=True, incr_col="view_count", commit=True, dynamodb=c,
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="N",
+        update_value=1,
+        increment=True,
+        incr_col="view_count",
+        commit=True,
+        dynamodb=c,
     )
     assert result.errors == {}
     assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
@@ -1030,13 +1214,19 @@ def test_batch_update_by_gsi_incr_col_without_increment_raises(gsi: ThaGsi) -> N
     c = _batch_upd_client(_UPD_TABLE_DESC, {})
     with pytest.raises(ValueError, match="incr_col requires increment=True"):
         gsi.batch_update_by_gsi(
-            "orders", "status-index", ["PENDING"],
-            update_attr="status", update_type="S", update_value="DONE",
-            incr_col="view_count", dynamodb=c,
+            "orders",
+            "status-index",
+            ["PENDING"],
+            update_attr="status",
+            update_type="S",
+            update_value="DONE",
+            incr_col="view_count",
+            dynamodb=c,
         )
 
 
 # --- skip_statuses ---
+
 
 def test_batch_query_skip_statuses_default(gsi: ThaGsi) -> None:
     c = _client_fn(_TABLE_DESC)
@@ -1057,8 +1247,12 @@ def test_batch_query_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
         {"email": "b@x.com", "row status": "warning"},
     ]
     result = gsi.batch_query(
-        "users", "email-index", rows=rows, gsi_col="email",
-        skip_statuses=[], dynamodb=c,
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        skip_statuses=[],
+        dynamodb=c,
     )
     assert set(result.results) == {"a@x.com", "b@x.com"}
 
@@ -1070,8 +1264,12 @@ def test_batch_query_skip_statuses_custom_col(gsi: ThaGsi) -> None:
         {"email": "b@x.com", "state": "ok"},
     ]
     result = gsi.batch_query(
-        "users", "email-index", rows=rows, gsi_col="email",
-        status_col="state", dynamodb=c,
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        status_col="state",
+        dynamodb=c,
     )
     assert set(result.results) == {"b@x.com"}
 
@@ -1094,8 +1292,12 @@ def test_batch_count_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
         {"email": "abc", "row status": "warning"},
     ]
     result = gsi.batch_count(
-        "users", "email-index", rows=rows, gsi_col="email",
-        skip_statuses=[], dynamodb=c,
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        skip_statuses=[],
+        dynamodb=c,
     )
     assert set(result.results) == {"ab", "abc"}
 
@@ -1111,9 +1313,13 @@ def test_batch_update_by_gsi_skip_statuses_default(gsi: ThaGsi) -> None:
         {"status": "HOLD", "row status": "warning"},
     ]
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index",
-        rows=rows, gsi_col="status",
-        update_attr="status", update_type="S", update_value="DONE",
+        "orders",
+        "status-index",
+        rows=rows,
+        gsi_col="status",
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
         dynamodb=c,
     )
     assert set(result.results) == {"PENDING"}
@@ -1133,9 +1339,14 @@ def test_batch_update_by_gsi_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
         {"status": "REVIEW", "row status": "warning"},
     ]
     result = gsi.batch_update_by_gsi(
-        "orders", "status-index",
-        rows=rows, gsi_col="status",
-        update_attr="status", update_type="S", update_value="DONE",
-        skip_statuses=[], dynamodb=c,
+        "orders",
+        "status-index",
+        rows=rows,
+        gsi_col="status",
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        skip_statuses=[],
+        dynamodb=c,
     )
     assert set(result.results) == {"PENDING", "REVIEW"}

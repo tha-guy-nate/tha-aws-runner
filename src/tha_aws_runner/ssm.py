@@ -26,6 +26,7 @@ class ThaSSM(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
+
     @staticmethod
     def _resolve_param_path(path: str) -> str:
         if not path.startswith("arn:"):

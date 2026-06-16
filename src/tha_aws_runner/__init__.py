@@ -9,7 +9,7 @@ from tha_aws_runner.s3 import ThaS3
 from tha_aws_runner.ssm import ThaSSM
 from tha_aws_runner.utils import cli_auth_check, current_identity, parse_arn, parse_assumed_role_arn
 
-__version__ = "0.1.15"
+__version__ = "0.1.16"
 __all__ = [
     "AWSBase",
     "AWSClients",

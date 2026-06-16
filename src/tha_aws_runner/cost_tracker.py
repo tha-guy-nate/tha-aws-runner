@@ -82,12 +82,8 @@ class DdbCostTracker:
             self._hooked[sid] = session
         uid = f"tha-cost-{id(self)}-{sid}"
         emitter = session._session.get_component("event_emitter")  # type: ignore[attr-defined]
-        emitter.register(
-            "before-parameter-build.dynamodb.*", self._inject, unique_id=f"{uid}-i"
-        )
-        emitter.register(
-            "after-call.dynamodb.*", self._capture, unique_id=f"{uid}-c"
-        )
+        emitter.register("before-parameter-build.dynamodb.*", self._inject, unique_id=f"{uid}-i")
+        emitter.register("after-call.dynamodb.*", self._capture, unique_id=f"{uid}-c")
 
     def _unhook_all(self) -> None:
         for sid, session in self._hooked.items():
@@ -96,9 +92,7 @@ class DdbCostTracker:
             emitter.unregister(
                 "before-parameter-build.dynamodb.*", self._inject, unique_id=f"{uid}-i"
             )
-            emitter.unregister(
-                "after-call.dynamodb.*", self._capture, unique_id=f"{uid}-c"
-            )
+            emitter.unregister("after-call.dynamodb.*", self._capture, unique_id=f"{uid}-c")
         self._hooked.clear()
 
     # ------------------------------------------------------------------

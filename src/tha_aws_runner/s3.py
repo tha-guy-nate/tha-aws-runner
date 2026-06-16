@@ -47,6 +47,7 @@ class ThaS3(AWSBase):
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
         )
+
     @staticmethod
     def _resolve_bucket(bucket: str) -> str:
         if not bucket.startswith("arn:"):
@@ -264,8 +265,10 @@ class ThaS3(AWSBase):
 
         if not commit:
             result = {
-                "src_bucket": src_bucket, "src_key": src_key,
-                "dst_bucket": dst_bucket, "dst_key": dst_key,
+                "src_bucket": src_bucket,
+                "src_key": src_key,
+                "dst_bucket": dst_bucket,
+                "dst_key": dst_key,
                 "status": "dry_run",
             }
             self.rows = result
@@ -278,8 +281,10 @@ class ThaS3(AWSBase):
             Key=dst_key,
         )
         result = {
-            "src_bucket": src_bucket, "src_key": src_key,
-            "dst_bucket": dst_bucket, "dst_key": dst_key,
+            "src_bucket": src_bucket,
+            "src_key": src_key,
+            "dst_bucket": dst_bucket,
+            "dst_key": dst_key,
             "status": "copied",
         }
         self.rows = result
@@ -301,9 +306,15 @@ class ThaS3(AWSBase):
         keys = self.list_files(bucket, prefix, s3=s3)
         rows = [{"key": k} for k in keys]
         return self.batch_download(
-            rows, key_col="key", bucket=bucket,
-            local_dir=local_dir, encoding=encoding, workers=workers,
-            show_progress=show_progress, progress_desc=progress_desc, s3=s3,
+            rows,
+            key_col="key",
+            bucket=bucket,
+            local_dir=local_dir,
+            encoding=encoding,
+            workers=workers,
+            show_progress=show_progress,
+            progress_desc=progress_desc,
+            s3=s3,
         )
 
     def batch_download(
@@ -354,7 +365,9 @@ class ThaS3(AWSBase):
                 raw = row.get(local_path_col)
                 if not raw:
                     results[idx] = {
-                        "bucket": b, "key": k, "status": "error",
+                        "bucket": b,
+                        "key": k,
+                        "status": "error",
                         "message": f"missing {local_path_col} on row",
                     }
                     return
@@ -374,20 +387,28 @@ class ThaS3(AWSBase):
 
         _label = f"{progress_desc}: downloading files" if progress_desc else "downloading files"
         if workers > 1:
+
             def _threaded(args: tuple[int, dict]) -> None:
                 idx, row = args
                 client = s3 if s3 is not None else self._thread_clients().s3()
                 _one(idx, row, client)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(self._progress_iter(
-                    pool.map(_threaded, enumerate(rows)),
-                    total=len(rows), desc=_label, show_progress=show_progress,
-                ))
+                list(
+                    self._progress_iter(
+                        pool.map(_threaded, enumerate(rows)),
+                        total=len(rows),
+                        desc=_label,
+                        show_progress=show_progress,
+                    )
+                )
         else:
             single_client = self._client(s3)
             for idx, row in self._progress_iter(
-                enumerate(rows), total=len(rows), desc=_label, show_progress=show_progress,
+                enumerate(rows),
+                total=len(rows),
+                desc=_label,
+                show_progress=show_progress,
             ):
                 _one(idx, row, single_client)
 

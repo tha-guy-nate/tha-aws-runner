@@ -20,9 +20,7 @@ def make_ddb(mock_client: MagicMock) -> ThaDdb:
 
 
 def test_fetch_by_pk_happy(mock_ddb_client):
-    mock_ddb_client.get_item.return_value = {
-        "Item": {"id": {"S": "pk1"}, "name": {"S": "Alice"}}
-    }
+    mock_ddb_client.get_item.return_value = {"Item": {"id": {"S": "pk1"}, "name": {"S": "Alice"}}}
     ddb = make_ddb(mock_ddb_client)
     result = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
     assert result["status"] is None
@@ -57,9 +55,7 @@ def test_fetch_by_pk_with_fields(mock_ddb_client):
         "Item": {"id": {"S": "pk1"}, "name": {"S": "Alice"}, "age": {"N": "30"}}
     }
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.fetch_by_pk(
-        "my_table", "pk1", key_name="id", key_type="S", fields={"name": "S"}
-    )
+    result = ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S", fields={"name": "S"})
     assert result["status"] is None
     assert result["data"] == {"name": "Alice"}
 
@@ -111,7 +107,11 @@ def test_batch_fetch_by_pk_with_fields(mock_ddb_client):
     }
     ddb = make_ddb(mock_ddb_client)
     result = ddb.batch_fetch_by_pk(
-        [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S",
+        [{"ref": "pk1"}],
+        "ref",
+        table_name="my_table",
+        key_name="id",
+        key_type="S",
         fields={"name": "S"},
     )
     assert result["my_table"]["pk1"]["status"] is None
@@ -127,12 +127,12 @@ def test_batch_fetch_by_pk_chunks_at_100(mock_ddb_client):
     rows = [{"ref": f"pk{i}"} for i in range(101)]
     result = ddb.batch_fetch_by_pk(rows, "ref", table_name="my_table", key_name="id", key_type="S")
     assert mock_ddb_client.batch_get_item.call_count == 2
-    first_keys = mock_ddb_client.batch_get_item.call_args_list[0].kwargs[
-        "RequestItems"
-    ]["my_table"]["Keys"]
-    second_keys = mock_ddb_client.batch_get_item.call_args_list[1].kwargs[
-        "RequestItems"
-    ]["my_table"]["Keys"]
+    first_keys = mock_ddb_client.batch_get_item.call_args_list[0].kwargs["RequestItems"][
+        "my_table"
+    ]["Keys"]
+    second_keys = mock_ddb_client.batch_get_item.call_args_list[1].kwargs["RequestItems"][
+        "my_table"
+    ]["Keys"]
     assert len(first_keys) == 100
     assert len(second_keys) == 1
     assert all(result["my_table"][f"pk{i}"]["status"] == "error" for i in range(101))
@@ -148,8 +148,13 @@ def test_batch_fetch_by_pk_threaded(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"ref": f"pk{i}"} for i in range(201)]
     result = ddb.batch_fetch_by_pk(
-        rows, "ref", table_name="my_table", key_name="id", key_type="S",
-        workers=3, dynamodb=mock_ddb_client,
+        rows,
+        "ref",
+        table_name="my_table",
+        key_name="id",
+        key_type="S",
+        workers=3,
+        dynamodb=mock_ddb_client,
     )
     assert mock_ddb_client.batch_get_item.call_count == 3
     assert all(result["my_table"][f"pk{i}"]["status"] is None for i in range(201))
@@ -253,7 +258,12 @@ def test_batch_fetch_by_pk_skip_statuses_empty_disables(mock_ddb_client):
         {"ref": "pk2", "row status": "warning"},
     ]
     ddb.batch_fetch_by_pk(
-        rows, "ref", table_name="my_table", key_name="id", key_type="S", skip_statuses=[],
+        rows,
+        "ref",
+        table_name="my_table",
+        key_name="id",
+        key_type="S",
+        skip_statuses=[],
     )
     keys_sent = mock_ddb_client.batch_get_item.call_args.kwargs["RequestItems"]["my_table"]["Keys"]
     assert {k["id"]["S"] for k in keys_sent} == {"pk1", "pk2"}
@@ -273,9 +283,7 @@ def test_update_by_pk_happy(mock_ddb_client):
 def test_update_by_pk_skipped_on_conditional_check(mock_ddb_client):
     mock_ddb_client.update_item.side_effect = _client_error("ConditionalCheckFailedException")
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.update_by_pk(
-        "my_table", "pk1", "id", "S", "status", "S", "active", commit=True
-    )
+    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
     assert result["status"] == "skipped"
 
 
@@ -337,8 +345,15 @@ def test_batch_update_by_pk_commit(mock_ddb_client):
         {"user_id": "pk2", "status_col": "inactive"},
     ]
     result = ddb.batch_update_by_pk(
-        rows, "user_id", "id", "S", "status", "S", "status_col",
-        table_name="my_table", commit=True,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "status_col",
+        table_name="my_table",
+        commit=True,
     )
     assert len(result) == 2
     assert result[0]["status"] == "updated"
@@ -351,8 +366,17 @@ def test_batch_update_by_pk_threaded(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": f"pk{i}", "status_col": "active"} for i in range(6)]
     result = ddb.batch_update_by_pk(
-        rows, "user_id", "id", "S", "status", "S", "status_col",
-        table_name="my_table", workers=3, commit=True, dynamodb=mock_ddb_client,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "status_col",
+        table_name="my_table",
+        workers=3,
+        commit=True,
+        dynamodb=mock_ddb_client,
     )
     assert len(result) == 6
     assert all(r["status"] == "updated" for r in result)
@@ -368,8 +392,15 @@ def test_batch_update_by_pk_table_name_col(mock_ddb_client):
         {"user_id": "pk2", "status_col": "inactive", "tbl": "users"},
     ]
     result = ddb.batch_update_by_pk(
-        rows, "user_id", "id", "S", "status", "S", "status_col",
-        table_name_col="tbl", commit=True,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "status_col",
+        table_name_col="tbl",
+        commit=True,
     )
     assert len(result) == 2
     assert result[0]["status"] == "updated"
@@ -395,8 +426,15 @@ def test_batch_update_by_pk_skip_statuses_default(mock_ddb_client):
         {"user_id": "pk3", "val": "active", "row status": "warning"},
     ]
     result = ddb.batch_update_by_pk(
-        rows, "user_id", "id", "S", "status", "S", "val",
-        table_name="my_table", commit=True,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "val",
+        table_name="my_table",
+        commit=True,
     )
     assert len(result) == 1
     assert result[0]["pk"] == "pk1"
@@ -411,8 +449,16 @@ def test_batch_update_by_pk_skip_statuses_empty_disables(mock_ddb_client):
         {"user_id": "pk2", "val": "active", "row status": "warning"},
     ]
     result = ddb.batch_update_by_pk(
-        rows, "user_id", "id", "S", "status", "S", "val",
-        table_name="my_table", commit=True, skip_statuses=[],
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "val",
+        table_name="my_table",
+        commit=True,
+        skip_statuses=[],
     )
     assert len(result) == 2
     assert mock_ddb_client.update_item.call_count == 2
@@ -446,8 +492,14 @@ def test_batch_delete_by_pk_threaded(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     rows = [{"user_id": f"pk{i}"} for i in range(6)]
     result = ddb.batch_delete_by_pk(
-        rows, "user_id", "id", "S",
-        table_name="my_table", workers=3, commit=True, dynamodb=mock_ddb_client,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        table_name="my_table",
+        workers=3,
+        commit=True,
+        dynamodb=mock_ddb_client,
     )
     assert len(result) == 6
     assert all(r["status"] == "deleted" for r in result)
@@ -463,7 +515,12 @@ def test_batch_delete_by_pk_table_name_col(mock_ddb_client):
         {"user_id": "pk2", "tbl": "users"},
     ]
     result = ddb.batch_delete_by_pk(
-        rows, "user_id", "id", "S", table_name_col="tbl", commit=True,
+        rows,
+        "user_id",
+        "id",
+        "S",
+        table_name_col="tbl",
+        commit=True,
     )
     assert len(result) == 2
     assert result[0]["status"] == "deleted"
@@ -502,7 +559,13 @@ def test_batch_delete_by_pk_skip_statuses_empty_disables(mock_ddb_client):
         {"user_id": "pk2", "row status": "warning"},
     ]
     result = ddb.batch_delete_by_pk(
-        rows, "user_id", "id", "S", table_name="my_table", commit=True, skip_statuses=[],
+        rows,
+        "user_id",
+        "id",
+        "S",
+        table_name="my_table",
+        commit=True,
+        skip_statuses=[],
     )
     assert len(result) == 2
     assert mock_ddb_client.delete_item.call_count == 2
@@ -590,9 +653,7 @@ def test_fetch_by_pk_arn(mock_ddb_client):
 def test_update_by_pk_arn(mock_ddb_client):
     mock_ddb_client.update_item.return_value = {"Attributes": {}}
     ddb = make_ddb(mock_ddb_client)
-    result = ddb.update_by_pk(
-        _TABLE_ARN, "pk1", "id", "S", "status", "S", "active", commit=True
-    )
+    result = ddb.update_by_pk(_TABLE_ARN, "pk1", "id", "S", "status", "S", "active", commit=True)
     assert result["status"] == "updated"
     assert mock_ddb_client.update_item.call_args[1]["TableName"] == "my_table"
 
