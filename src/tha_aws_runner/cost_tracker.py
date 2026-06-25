@@ -38,7 +38,7 @@ class DdbCostTracker:
         self._lock = threading.Lock()
         self._rcu: float = 0.0
         self._wcu: float = 0.0
-        self._tables: dict[str, dict[str, float]] = {}
+        self._tables: dict[str, dict[str, Any]] = {}
         self._hooked: dict[int, Any] = {}  # id(boto3_session) -> session object
 
     # ------------------------------------------------------------------
@@ -46,9 +46,9 @@ class DdbCostTracker:
     # ------------------------------------------------------------------
 
     def _inject(self, params: dict[str, Any], **_: Any) -> None:
-        """Inject ReturnConsumedCapacity=TOTAL so AWS returns usage data."""
+        """Inject ReturnConsumedCapacity=INDEXES so AWS returns per-GSI usage data."""
         if "ReturnConsumedCapacity" not in params:
-            params["ReturnConsumedCapacity"] = "TOTAL"
+            params["ReturnConsumedCapacity"] = "INDEXES"
 
     def _capture(self, parsed: dict[str, Any] | None, **_: Any) -> None:
         """Accumulate ConsumedCapacity from a DynamoDB response."""
@@ -65,9 +65,17 @@ class DdbCostTracker:
                 wcu = float(entry.get("WriteCapacityUnits", 0))
                 self._rcu += rcu
                 self._wcu += wcu
-                row = self._tables.setdefault(table, {"rcu": 0.0, "wcu": 0.0})
-                row["rcu"] += rcu
-                row["wcu"] += wcu
+                tbl = self._tables.setdefault(table, {"rcu": 0.0, "wcu": 0.0, "indexes": {}})
+                tbl["rcu"] += rcu
+                tbl["wcu"] += wcu
+                for idx_name, idx_data in entry.get("GlobalSecondaryIndexes", {}).items():
+                    idx_rcu = float(idx_data.get("ReadCapacityUnits", 0))
+                    idx_wcu = float(idx_data.get("WriteCapacityUnits", 0))
+                    idx = tbl.setdefault("indexes", {}).setdefault(
+                        idx_name, {"rcu": 0.0, "wcu": 0.0}
+                    )
+                    idx["rcu"] += idx_rcu
+                    idx["wcu"] += idx_wcu
 
     # ------------------------------------------------------------------
     # Session hook management
@@ -135,17 +143,28 @@ class DdbCostTracker:
         with self._lock:
             rcu, wcu = self._rcu, self._wcu
             tables = {name: dict(stats) for name, stats in self._tables.items()}
+        tables_out: dict[str, Any] = {}
+        for name, s in tables.items():
+            tbl_entry: dict[str, Any] = {
+                "rcu": s["rcu"],
+                "wcu": s["wcu"],
+                "usd": round(s["rcu"] * r_price + s["wcu"] * w_price, 6),
+            }
+            if s.get("indexes"):
+                tbl_entry["indexes"] = {
+                    idx: {
+                        "rcu": idx_s["rcu"],
+                        "wcu": idx_s["wcu"],
+                        "usd": round(idx_s["rcu"] * r_price + idx_s["wcu"] * w_price, 6),
+                    }
+                    for idx, idx_s in s["indexes"].items()
+                }
+            tables_out[name] = tbl_entry
+
         return {
             "usd": round(rcu * r_price + wcu * w_price, 6),
             "rcu": rcu,
             "wcu": wcu,
             "region": self._region,
-            "tables": {
-                name: {
-                    "rcu": s["rcu"],
-                    "wcu": s["wcu"],
-                    "usd": round(s["rcu"] * r_price + s["wcu"] * w_price, 6),
-                }
-                for name, s in tables.items()
-            },
+            "tables": tables_out,
         }
