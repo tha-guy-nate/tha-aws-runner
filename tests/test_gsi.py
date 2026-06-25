@@ -1350,3 +1350,165 @@ def test_batch_update_by_gsi_skip_statuses_empty_disables(gsi: ThaGsi) -> None:
         dynamodb=c,
     )
     assert set(result.results) == {"PENDING", "REVIEW"}
+
+
+# --- gsi_hash_key / gsi_hash_type (no describe) ---
+
+
+def _stub_client(query_pages: list) -> MagicMock:
+    """Client with no describe_table wired — any call would fail loudly."""
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+    mock.query.side_effect = query_pages
+    return mock
+
+
+def test_query_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
+    c = _stub_client([{"Items": [{"districtId": {"S": "d1"}, "name": {"S": "D1"}}]}])
+    result = gsi.query(
+        "edfi-connections_prod",
+        "districtId-index",
+        "d1",
+        gsi_hash_key="districtId",
+        gsi_hash_type="S",
+        dynamodb=c,
+    )
+    assert result == [{"districtId": "d1", "name": "D1"}]
+    c.describe_table.assert_not_called()
+
+
+def test_query_with_gsi_keys_and_range_key(gsi: ThaGsi) -> None:
+    c = _stub_client([{"Items": []}])
+    gsi.query(
+        "orders",
+        "user-date-index",
+        "u1",
+        gsi_hash_key="user_id",
+        gsi_hash_type="S",
+        gsi_range_key="created_at",
+        gsi_range_type="S",
+        sort_key_value="2024-01-01",
+        sort_key_op=">=",
+        dynamodb=c,
+    )
+    kw = c.query.call_args.kwargs
+    assert kw["KeyConditionExpression"] == "#_pk = :_pkv AND #_sk >= :_skv"
+    assert kw["ExpressionAttributeNames"]["#_sk"] == "created_at"
+    c.describe_table.assert_not_called()
+
+
+def test_count_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+    mock.query.return_value = {"Count": 5}
+    result = gsi.count(
+        "edfi-connections_prod",
+        "districtId-index",
+        "d1",
+        gsi_hash_key="districtId",
+        gsi_hash_type="S",
+        dynamodb=mock,
+    )
+    assert result == 5
+    mock.describe_table.assert_not_called()
+
+
+def test_batch_query_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+
+    def _query(**kwargs: object) -> dict:
+        pk_val = next(iter(kwargs["ExpressionAttributeValues"][":_pkv"].values()))  # type: ignore[index]
+        return {"Items": [{"districtId": {"S": str(pk_val)}}]}
+
+    mock.query.side_effect = _query
+    result = gsi.batch_query(
+        "edfi-connections_prod",
+        "districtId-index",
+        ["d1", "d2"],
+        gsi_hash_key="districtId",
+        gsi_hash_type="S",
+        dynamodb=mock,
+    )
+    assert set(result.results) == {"d1", "d2"}
+    mock.describe_table.assert_not_called()
+
+
+def test_batch_count_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+    mock.query.return_value = {"Count": 3}
+    result = gsi.batch_count(
+        "edfi-connections_prod",
+        "districtId-index",
+        ["d1"],
+        gsi_hash_key="districtId",
+        gsi_hash_type="S",
+        dynamodb=mock,
+    )
+    assert result.results["d1"] == 3
+    mock.describe_table.assert_not_called()
+
+
+def test_update_by_gsi_with_gsi_keys_only_describes_once_for_table(gsi: ThaGsi) -> None:
+    """GSI keys bypass GSI describe; table key resolve still needs one describe."""
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.return_value = {}
+    gsi.update_by_gsi(
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "S",
+        "SHIPPED",
+        gsi_hash_key="status",
+        gsi_hash_type="S",
+        commit=True,
+        dynamodb=mock,
+    )
+    assert mock.describe_table.call_count == 1
+
+
+def test_batch_update_by_gsi_with_gsi_keys_skips_gsi_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+
+    def _query(**kwargs: object) -> dict:
+        return {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+
+    mock.query.side_effect = _query
+    mock.update_item.return_value = {}
+    gsi.batch_update_by_gsi(
+        "orders",
+        "status-index",
+        ["PENDING"],
+        gsi_hash_key="status",
+        gsi_hash_type="S",
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        dynamodb=mock,
+    )
+    assert mock.describe_table.call_count == 1
+
+
+def test_resolve_gsi_keys_hash_key_without_type_raises(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    with pytest.raises(ValueError, match="gsi_hash_key and gsi_hash_type"):
+        gsi.query("tbl", "idx", "val", gsi_hash_key="districtId", dynamodb=mock)
+
+
+def test_resolve_gsi_keys_range_key_without_type_raises(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    with pytest.raises(ValueError, match="gsi_range_key and gsi_range_type"):
+        gsi.query(
+            "tbl",
+            "idx",
+            "val",
+            gsi_hash_key="districtId",
+            gsi_hash_type="S",
+            gsi_range_key="createdAt",
+            dynamodb=mock,
+        )

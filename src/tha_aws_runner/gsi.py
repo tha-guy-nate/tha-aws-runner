@@ -89,8 +89,23 @@ class ThaGsi(AWSBase):
         return self._table_cache[table_name]  # type: ignore[no-any-return]
 
     def _resolve_gsi_keys(
-        self, table_name: str, index_name: str, client: Any
+        self,
+        table_name: str,
+        index_name: str,
+        client: Any,
+        *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
     ) -> tuple[str, str, str | None, str | None]:
+        if bool(gsi_hash_key) != bool(gsi_hash_type):
+            raise ValueError("pass both gsi_hash_key and gsi_hash_type, or neither")
+        if bool(gsi_range_key) != bool(gsi_range_type):
+            raise ValueError("pass both gsi_range_key and gsi_range_type, or neither")
+        if gsi_hash_key:
+            assert gsi_hash_type is not None
+            return gsi_hash_key, gsi_hash_type, gsi_range_key, gsi_range_type
         table_desc = self._get_table_desc(table_name, client)
 
         gsi_list = table_desc.get("GlobalSecondaryIndexes", [])
@@ -267,6 +282,10 @@ class ThaGsi(AWSBase):
         index_name: str,
         value: Any,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         sort_key_value: Any = None,
         sort_key_op: str = "=",
         filter_expr: str | None = None,
@@ -276,7 +295,15 @@ class ThaGsi(AWSBase):
     ) -> list[dict[str, Any]]:
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
-        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(table_name, index_name, client)
+        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
+            table_name,
+            index_name,
+            client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
+        )
         kwargs = self._build_query_kwargs(
             table_name,
             index_name,
@@ -301,6 +328,10 @@ class ThaGsi(AWSBase):
         index_name: str,
         value: Any,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         sort_key_value: Any = None,
         sort_key_op: str = "=",
         filter_expr: str | None = None,
@@ -310,7 +341,15 @@ class ThaGsi(AWSBase):
     ) -> int:
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
-        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(table_name, index_name, client)
+        pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
+            table_name,
+            index_name,
+            client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
+        )
         kwargs = self._build_query_kwargs(
             table_name,
             index_name,
@@ -338,6 +377,10 @@ class ThaGsi(AWSBase):
         update_type: str,
         update_value: Any,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         increment: bool = False,
         incr_col: str | None = None,
         sort_key_value: Any = None,
@@ -355,7 +398,13 @@ class ThaGsi(AWSBase):
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
         gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type = self._resolve_gsi_keys(
-            table_name, index_name, client
+            table_name,
+            index_name,
+            client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
         )
         tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
             table_name, client
@@ -439,6 +488,10 @@ class ThaGsi(AWSBase):
         index_name: str,
         values: list[Any] | None = None,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         rows: list[dict[str, Any]] | None = None,
         gsi_col: str | None = None,
         sort_key_value: Any = None,
@@ -460,7 +513,13 @@ class ThaGsi(AWSBase):
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
-            table_name, index_name, init_client
+            table_name,
+            index_name,
+            init_client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
         )
 
         def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
@@ -510,6 +569,10 @@ class ThaGsi(AWSBase):
         index_name: str,
         values: list[Any] | None = None,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         rows: list[dict[str, Any]] | None = None,
         gsi_col: str | None = None,
         sort_key_value: Any = None,
@@ -531,7 +594,13 @@ class ThaGsi(AWSBase):
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
-            table_name, index_name, init_client
+            table_name,
+            index_name,
+            init_client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
         )
 
         def _run(v: Any) -> tuple[Any, int]:
@@ -581,6 +650,10 @@ class ThaGsi(AWSBase):
         index_name: str,
         values: list[Any] | None = None,
         *,
+        gsi_hash_key: str | None = None,
+        gsi_hash_type: str | None = None,
+        gsi_range_key: str | None = None,
+        gsi_range_type: str | None = None,
         rows: list[dict[str, Any]] | None = None,
         gsi_col: str | None = None,
         update_attr: str,
@@ -612,7 +685,13 @@ class ThaGsi(AWSBase):
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type = self._resolve_gsi_keys(
-            table_name, index_name, init_client
+            table_name,
+            index_name,
+            init_client,
+            gsi_hash_key=gsi_hash_key,
+            gsi_hash_type=gsi_hash_type,
+            gsi_range_key=gsi_range_key,
+            gsi_range_type=gsi_range_type,
         )
         tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
             table_name, init_client
