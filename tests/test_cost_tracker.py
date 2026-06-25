@@ -55,7 +55,7 @@ def test_inject_adds_key() -> None:
     tracker = make_tracker()
     params: dict = {}
     tracker._inject(params)
-    assert params["ReturnConsumedCapacity"] == "TOTAL"
+    assert params["ReturnConsumedCapacity"] == "INDEXES"
 
 
 def test_inject_does_not_override_existing() -> None:
@@ -90,7 +90,9 @@ def test_capture_single_table() -> None:
     )
     assert tracker._rcu == 10.0
     assert tracker._wcu == 2.0
-    assert tracker._tables["my_table"] == {"rcu": 10.0, "wcu": 2.0}
+    assert tracker._tables["my_table"]["rcu"] == 10.0
+    assert tracker._tables["my_table"]["wcu"] == 2.0
+    assert tracker._tables["my_table"]["indexes"] == {}
 
 
 def test_capture_accumulates_across_calls() -> None:
@@ -115,7 +117,8 @@ def test_capture_accumulates_across_calls() -> None:
     )
     assert tracker._rcu == 8.0
     assert tracker._wcu == 1.0
-    assert tracker._tables["t1"] == {"rcu": 8.0, "wcu": 1.0}
+    assert tracker._tables["t1"]["rcu"] == 8.0
+    assert tracker._tables["t1"]["wcu"] == 1.0
 
 
 def test_capture_batch_list_response() -> None:
@@ -166,7 +169,45 @@ def test_capture_missing_units_default_to_zero() -> None:
     tracker._capture({"ConsumedCapacity": {"TableName": "t"}})
     assert tracker._rcu == 0.0
     assert tracker._wcu == 0.0
-    assert tracker._tables["t"] == {"rcu": 0.0, "wcu": 0.0}
+    assert tracker._tables["t"]["rcu"] == 0.0
+    assert tracker._tables["t"]["wcu"] == 0.0
+    assert tracker._tables["t"]["indexes"] == {}
+
+
+def test_capture_gsi_breakdown() -> None:
+    tracker = make_tracker()
+    tracker._capture(
+        {
+            "ConsumedCapacity": {
+                "TableName": "my_table",
+                "ReadCapacityUnits": 5.0,
+                "WriteCapacityUnits": 0.0,
+                "GlobalSecondaryIndexes": {
+                    "my-gsi": {"ReadCapacityUnits": 5.0, "WriteCapacityUnits": 0.0}
+                },
+            }
+        }
+    )
+    assert tracker._tables["my_table"]["indexes"]["my-gsi"]["rcu"] == 5.0
+    assert tracker._tables["my_table"]["indexes"]["my-gsi"]["wcu"] == 0.0
+
+
+def test_capture_gsi_accumulates() -> None:
+    tracker = make_tracker()
+    for _ in range(3):
+        tracker._capture(
+            {
+                "ConsumedCapacity": {
+                    "TableName": "t",
+                    "ReadCapacityUnits": 2.0,
+                    "WriteCapacityUnits": 0.0,
+                    "GlobalSecondaryIndexes": {
+                        "idx": {"ReadCapacityUnits": 2.0, "WriteCapacityUnits": 0.0}
+                    },
+                }
+            }
+        )
+    assert tracker._tables["t"]["indexes"]["idx"]["rcu"] == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +229,7 @@ def test_summary_usd_calculation() -> None:
 
 def test_summary_per_table_usd() -> None:
     tracker = make_tracker(region="us-east-1")
-    tracker._tables = {"t1": {"rcu": 500_000.0, "wcu": 100_000.0}}
+    tracker._tables = {"t1": {"rcu": 500_000.0, "wcu": 100_000.0, "indexes": {}}}
     tracker._rcu = 500_000.0
     tracker._wcu = 100_000.0
     result = tracker.summary()
@@ -198,6 +239,31 @@ def test_summary_per_table_usd() -> None:
     assert t1["usd"] == round(
         500_000 * rcu_price("us-east-1") + 100_000 * wcu_price("us-east-1"), 6
     )
+
+
+def test_summary_includes_gsi_indexes() -> None:
+    tracker = make_tracker(region="us-east-1")
+    tracker._tables = {
+        "t1": {
+            "rcu": 10.0,
+            "wcu": 0.0,
+            "indexes": {"my-gsi": {"rcu": 10.0, "wcu": 0.0}},
+        }
+    }
+    tracker._rcu = 10.0
+    result = tracker.summary()
+    idx = result["tables"]["t1"]["indexes"]["my-gsi"]
+    assert idx["rcu"] == 10.0
+    assert idx["wcu"] == 0.0
+    assert idx["usd"] == round(10.0 * rcu_price("us-east-1"), 6)
+
+
+def test_summary_no_indexes_key_when_no_gsi() -> None:
+    tracker = make_tracker()
+    tracker._tables = {"t1": {"rcu": 5.0, "wcu": 0.0, "indexes": {}}}
+    tracker._rcu = 5.0
+    result = tracker.summary()
+    assert "indexes" not in result["tables"]["t1"]
 
 
 def test_summary_zero_when_no_calls() -> None:
@@ -211,7 +277,7 @@ def test_summary_zero_when_no_calls() -> None:
 
 def test_summary_does_not_mutate_internal_tables() -> None:
     tracker = make_tracker()
-    tracker._tables = {"t": {"rcu": 10.0, "wcu": 0.0}}
+    tracker._tables = {"t": {"rcu": 10.0, "wcu": 0.0, "indexes": {}}}
     tracker._rcu = 10.0
     result = tracker.summary()
     result["tables"]["t"]["rcu"] = 999.0
