@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   publish:
     uses: tha-guy-nate/tha-github-workflows/.github/workflows/python-publish.yml@main
