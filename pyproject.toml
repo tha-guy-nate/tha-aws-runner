@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tha-aws-runner"
-version = "0.2.0"
+version = "0.2.1"
 description = "A Tabular Helper API library that wraps common AWS services (DynamoDB, S3, SSM) with a typed, consistent interface built on boto3."
 readme = "README.md"
 license = { text = "MIT" }
