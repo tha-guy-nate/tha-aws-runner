@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-27
+### Added
+- PyPI version, Python version, and pre-commit badges in README.
+- `Changelog` URL in `pyproject.toml` (renders as a PyPI sidebar link).
+- GitHub topics set on all 10 tha-* repositories.
+
 ## [0.2.1] - 2026-06-27
 ### Added
 - MIT license file with attribution requirement.
