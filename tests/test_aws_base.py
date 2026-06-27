@@ -5,11 +5,11 @@ from tha_aws_runner.utils import cli_auth_check, parse_arn, parse_assumed_role_a
 
 
 def test_parse_assumed_role_arn_happy():
-    arn = "arn:aws:sts::524520772801:assumed-role/my_role/nwright"
+    arn = "arn:aws:sts::123456789012:assumed-role/my_role/test-user"
     account_id, role_name, session_name = parse_assumed_role_arn(arn)
-    assert account_id == "524520772801"
+    assert account_id == "123456789012"
     assert role_name == "my_role"
-    assert session_name == "nwright"
+    assert session_name == "test-user"
 
 
 def test_parse_assumed_role_arn_malformed():
