@@ -1,6 +1,9 @@
 # tha-aws-runner
 
 [![CI](https://github.com/tha-guy-nate/tha-aws-runner/actions/workflows/ci.yml/badge.svg)](https://github.com/tha-guy-nate/tha-aws-runner/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tha-aws-runner)](https://pypi.org/project/tha-aws-runner/)
+[![Python](https://img.shields.io/pypi/pyversions/tha-aws-runner)](https://pypi.org/project/tha-aws-runner/)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 
 A Tabular Helper API library that wraps common AWS services (DynamoDB, S3, SSM, and DynamoDB GSI queries) with a typed, consistent interface built on boto3.
 
