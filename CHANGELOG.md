@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-27
+### Changed
+- Enabled mypy `strict = true`; all type annotations across `dynamodb`, `gsi`, `s3`, `ssm`, `cost_tracker`, and `aws_base` updated to satisfy strict checks.
+
 ## [0.2.2] - 2026-06-27
 ### Added
 - PyPI version, Python version, and pre-commit badges in README.

@@ -144,7 +144,7 @@ class AWSBase:
     ) -> Iterable[T]:
         if show_progress or self.mode == "cli":
             ncols = min(shutil.get_terminal_size(fallback=(85, 24)).columns, 85)
-            return tqdm(iterable, total=total, desc=desc, ncols=ncols)  # type: ignore[return-value]
+            return tqdm(iterable, total=total, desc=desc, ncols=ncols)  # type: ignore[no-any-return]
         return iterable
 
     def _progress_update(self, message: str) -> None:

@@ -45,13 +45,13 @@ class ThaDdb(AWSBase):
         return code in ThaDdb._THROTTLE_CODES
 
     @staticmethod
-    def _extract_any(attr: dict) -> Any:
+    def _extract_any(attr: dict[str, Any] | None) -> Any:
         if not attr:
             return None
         return next(iter(attr.values()), None)
 
     @staticmethod
-    def _extract_typed(attr: dict, expected_type: str = "S") -> Any:
+    def _extract_typed(attr: dict[str, Any] | None, expected_type: str = "S") -> Any:
         if not attr:
             return None
         return attr.get(expected_type, None)
@@ -66,7 +66,7 @@ class ThaDdb(AWSBase):
         return resource_id
 
     @staticmethod
-    def _to_ddb_attr(val: Any, update_type: str) -> dict:
+    def _to_ddb_attr(val: Any, update_type: str) -> dict[str, Any]:
         if isinstance(val, dict) and len(val) == 1:
             t, v = next(iter(val.items()))
             if t != update_type:
@@ -113,7 +113,7 @@ class ThaDdb(AWSBase):
             return dynamodb
         if not hasattr(self._thread_local, "dynamodb"):
             self._thread_local.dynamodb = self._thread_clients().dynamodb()
-        return self._thread_local.dynamodb  # type: ignore[no-any-return]
+        return self._thread_local.dynamodb
 
     def fetch_by_pk(
         self,
@@ -124,7 +124,7 @@ class ThaDdb(AWSBase):
         key_name: str | None = None,
         key_type: str | None = None,
         dynamodb: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
         key = {key_name: {key_type: partition_key}}
@@ -132,7 +132,7 @@ class ThaDdb(AWSBase):
             response = dynamodb.get_item(TableName=table_name, Key=key)
         except ClientError as e:
             msg = e.response["Error"]["Message"]
-            result: dict = {
+            result: dict[str, Any] = {
                 "status": "error",
                 "message": f"DynamoDB get_item failed: {msg}",
                 "pk": partition_key,
@@ -165,7 +165,7 @@ class ThaDdb(AWSBase):
                 "pk": partition_key,
                 "table": table_name,
                 "data": {
-                    field: self._extract_typed(item.get(field), expected_type)  # type: ignore[arg-type]
+                    field: self._extract_typed(item.get(field), expected_type)
                     for field, expected_type in fields.items()
                 },
             }
@@ -174,7 +174,7 @@ class ThaDdb(AWSBase):
 
     def batch_fetch_by_pk(
         self,
-        rows: list[dict],
+        rows: list[dict[str, Any]],
         pk_col: str,
         *,
         table_name: str | None = None,
@@ -188,7 +188,7 @@ class ThaDdb(AWSBase):
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
-    ) -> dict[str, dict[str, dict]]:
+    ) -> dict[str, dict[str, dict[str, Any]]]:
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -203,7 +203,7 @@ class ThaDdb(AWSBase):
 
         seen: dict[tuple[str, str], None] = {}
         for row in rows:
-            _raw = str(row.get(table_name_col) or "")
+            _raw = str(row.get(table_name_col or "") or "")
             tbl = table_name if table_name else self._resolve_table(_raw)
             pk = str(row.get(pk_col) or "")
             if tbl and pk:
@@ -216,30 +216,27 @@ class ThaDdb(AWSBase):
                 req.setdefault(tbl, {"Keys": []})["Keys"].append({key_name: {key_type: pk}})
             return req
 
-        records_dict: dict[str, dict[str, dict]] = {}
+        records_dict: dict[str, dict[str, dict[str, Any]]] = {}
         found_ids: set[tuple[str, str]] = set()
         chunks = [
             unique_pairs[i : i + MAX_BATCH_GET] for i in range(0, len(unique_pairs), MAX_BATCH_GET)
         ]
 
         def _absorb(
-            responses: dict[str, list[dict]],
-            local_records: dict[str, dict[str, dict]],
+            responses: dict[str, list[dict[str, Any]]],
+            local_records: dict[str, dict[str, dict[str, Any]]],
             local_found: set[tuple[str, str]],
         ) -> None:
             for tbl, items in responses.items():
                 for item in items:
-                    pk_val = self._extract_typed(item.get(key_name), key_type)  # type: ignore[arg-type]
+                    pk_val = self._extract_typed(item.get(key_name or ""), key_type or "")
                     if pk_val is None:
                         continue
                     local_found.add((tbl, pk_val))
                     if fields is None:
                         data = {k: self._extract_any(v) for k, v in item.items() if k != key_name}
                     else:
-                        data = {
-                            f: self._extract_typed(item.get(f), t)  # type: ignore[arg-type]
-                            for f, t in fields.items()
-                        }
+                        data = {f: self._extract_typed(item.get(f), t) for f, t in fields.items()}
                     local_records.setdefault(tbl, {})[pk_val] = {
                         "status": None,
                         "message": None,
@@ -250,8 +247,8 @@ class ThaDdb(AWSBase):
 
         def _process_chunk(
             chunk_pairs: list[tuple[str, str]], client: Any
-        ) -> tuple[dict[str, dict[str, dict]], set[tuple[str, str]]]:
-            local_records: dict[str, dict[str, dict]] = {}
+        ) -> tuple[dict[str, dict[str, dict[str, Any]]], set[tuple[str, str]]]:
+            local_records: dict[str, dict[str, dict[str, Any]]] = {}
             local_found: set[tuple[str, str]] = set()
 
             try:
@@ -276,7 +273,7 @@ class ThaDdb(AWSBase):
             while unprocessed and retries < MAX_RETRIES:
                 time.sleep(0.5 * (2**retries))
                 unprocessed_pairs = [
-                    (tbl, key[key_name][key_type])  # type: ignore[index]
+                    (tbl, key[key_name or ""][key_type or ""])
                     for tbl, tbl_data in unprocessed.items()
                     for key in tbl_data.get("Keys", [])
                 ]
@@ -301,7 +298,7 @@ class ThaDdb(AWSBase):
             if unprocessed:
                 for tbl, tbl_data in unprocessed.items():
                     for key in tbl_data.get("Keys", []):
-                        pk = key[key_name][key_type]  # type: ignore[index]
+                        pk = key[key_name][key_type]
                         local_found.add((tbl, pk))
                         local_records.setdefault(tbl, {})[pk] = {
                             "status": "error",
@@ -314,7 +311,7 @@ class ThaDdb(AWSBase):
             return local_records, local_found
 
         def _merge(
-            local_records: dict[str, dict[str, dict]], local_found: set[tuple[str, str]]
+            local_records: dict[str, dict[str, dict[str, Any]]], local_found: set[tuple[str, str]]
         ) -> None:
             for tbl, tbl_records in local_records.items():
                 records_dict.setdefault(tbl, {}).update(tbl_records)
@@ -325,7 +322,7 @@ class ThaDdb(AWSBase):
 
             def _threaded(
                 chunk_pairs: list[tuple[str, str]],
-            ) -> tuple[dict[str, dict[str, dict]], set[tuple[str, str]]]:
+            ) -> tuple[dict[str, dict[str, dict[str, Any]]], set[tuple[str, str]]]:
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
                 return _process_chunk(chunk_pairs, client)
 
@@ -374,7 +371,7 @@ class ThaDdb(AWSBase):
         commit: bool = False,
         dynamodb: Any = None,
         _set_rows: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 
@@ -465,7 +462,7 @@ class ThaDdb(AWSBase):
 
     def batch_update_by_pk(
         self,
-        rows: list[dict],
+        rows: list[dict[str, Any]],
         pk_col: str,
         key_name: str,
         key_type: str,
@@ -483,7 +480,7 @@ class ThaDdb(AWSBase):
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -493,15 +490,15 @@ class ThaDdb(AWSBase):
         if table_name is not None:
             table_name = self._resolve_table(table_name)
 
-        results: list[dict] = [{}] * len(rows)
+        results: list[dict[str, Any]] = [{}] * len(rows)
 
         _label = f"{progress_desc}: updating by pk" if progress_desc else "updating by pk"
         if workers > 1:
 
-            def _process(args: tuple[int, dict]) -> None:
+            def _process(args: tuple[int, dict[str, Any]]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                _raw = str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col or "") or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
@@ -535,7 +532,7 @@ class ThaDdb(AWSBase):
                 desc=_label,
                 show_progress=show_progress,
             ):
-                _raw = str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col or "") or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 val = row.get(value_col)
@@ -558,7 +555,7 @@ class ThaDdb(AWSBase):
 
     def batch_delete_by_pk(
         self,
-        rows: list[dict],
+        rows: list[dict[str, Any]],
         pk_col: str,
         key_name: str,
         key_type: str,
@@ -572,7 +569,7 @@ class ThaDdb(AWSBase):
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -582,15 +579,15 @@ class ThaDdb(AWSBase):
         if table_name is not None:
             table_name = self._resolve_table(table_name)
 
-        results: list[dict] = [{}] * len(rows)
+        results: list[dict[str, Any]] = [{}] * len(rows)
 
         _label = f"{progress_desc}: deleting by pk" if progress_desc else "deleting by pk"
         if workers > 1:
 
-            def _process(args: tuple[int, dict]) -> None:
+            def _process(args: tuple[int, dict[str, Any]]) -> None:
                 idx, row = args
                 client = dynamodb if dynamodb is not None else self._thread_clients().dynamodb()
-                _raw = str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col or "") or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
@@ -619,7 +616,7 @@ class ThaDdb(AWSBase):
                 desc=_label,
                 show_progress=show_progress,
             ):
-                _raw = str(row.get(table_name_col) or "")
+                _raw = str(row.get(table_name_col or "") or "")
                 tbl = table_name if table_name is not None else self._resolve_table(_raw)
                 pk = str(row.get(pk_col) or "")
                 results[idx] = self.delete_by_pk(
@@ -638,13 +635,13 @@ class ThaDdb(AWSBase):
     def batch_write(
         self,
         table_name: str,
-        items: list[dict],
+        items: list[dict[str, Any]],
         *,
         show_progress: bool = False,
         progress_desc: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 
@@ -655,7 +652,7 @@ class ThaDdb(AWSBase):
 
         MAX_RETRIES = 2
         put_requests = [{"PutRequest": {"Item": item}} for item in items]
-        unprocessed: dict = {table_name: put_requests}
+        unprocessed: dict[str, Any] = {table_name: put_requests}
         retries = 0
         written = 0
 
@@ -704,7 +701,7 @@ class ThaDdb(AWSBase):
         commit: bool = False,
         dynamodb: Any = None,
         _set_rows: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
 

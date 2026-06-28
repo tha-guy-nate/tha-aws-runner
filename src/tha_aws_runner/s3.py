@@ -76,7 +76,7 @@ class ThaS3(AWSBase):
             return s3
         if not hasattr(self._thread_local, "s3"):
             self._thread_local.s3 = self._thread_clients().s3()
-        return self._thread_local.s3  # type: ignore[no-any-return]
+        return self._thread_local.s3
 
     def upload_file(
         self,
@@ -89,7 +89,7 @@ class ThaS3(AWSBase):
         encoding: str = "utf-8",
         commit: bool = False,
         s3: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         if uri is not None:
             bucket, key = self._resolve_uri_or_arn(uri)
         elif bucket is not None:
@@ -152,7 +152,7 @@ class ThaS3(AWSBase):
         uri: str | None = None,
         commit: bool = False,
         s3: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         if uri is not None:
             bucket, key = self._resolve_uri_or_arn(uri)
         elif bucket is not None:
@@ -180,7 +180,7 @@ class ThaS3(AWSBase):
         local_path: str | None = None,
         encoding: str | None = None,
         s3: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         if uri is not None:
             bucket, key = self._resolve_uri_or_arn(uri)
         elif bucket is not None:
@@ -205,7 +205,12 @@ class ThaS3(AWSBase):
         else:
             body = response["Body"].read()
 
-        result: dict = {"bucket": bucket, "key": key, "status": "downloaded", "bytes": len(body)}
+        result: dict[str, Any] = {
+            "bucket": bucket,
+            "key": key,
+            "status": "downloaded",
+            "bytes": len(body),
+        }
 
         if local_path is not None:
             Path(local_path).write_bytes(body)
@@ -249,7 +254,7 @@ class ThaS3(AWSBase):
         dst_uri: str | None = None,
         commit: bool = False,
         s3: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         if src_uri is not None:
             src_bucket, src_key = self._resolve_uri_or_arn(src_uri)
         elif src_bucket is not None:
@@ -301,7 +306,7 @@ class ThaS3(AWSBase):
         show_progress: bool = False,
         progress_desc: str | None = None,
         s3: Any = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         bucket = self._resolve_bucket(bucket)
         keys = self.list_files(bucket, prefix, s3=s3)
         rows = [{"key": k} for k in keys]
@@ -319,7 +324,7 @@ class ThaS3(AWSBase):
 
     def batch_download(
         self,
-        rows: list[dict],
+        rows: list[dict[str, Any]],
         *,
         uri_col: str | None = None,
         key_col: str | None = None,
@@ -332,7 +337,7 @@ class ThaS3(AWSBase):
         show_progress: bool = False,
         progress_desc: str | None = None,
         s3: Any = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         if uri_col is not None and key_col is not None:
             raise ValueError("Provide exactly one of uri_col or key_col, not both")
         if uri_col is None and key_col is None:
@@ -345,16 +350,16 @@ class ThaS3(AWSBase):
         if bucket is not None:
             bucket = self._resolve_bucket(bucket)
 
-        def _resolve(row: dict) -> tuple[str, str]:
+        def _resolve(row: dict[str, Any]) -> tuple[str, str]:
             if uri_col is not None:
                 return _parse_s3_uri(str(row.get(uri_col) or ""))
-            b = bucket if bucket is not None else str(row.get(bucket_col) or "")
-            k = str(row.get(key_col) or "")
+            b = bucket if bucket is not None else str(row.get(bucket_col or "") or "")
+            k = str(row.get(key_col or "") or "")
             return b, k
 
-        results: list[dict] = [{}] * len(rows)
+        results: list[dict[str, Any]] = [{}] * len(rows)
 
-        def _one(idx: int, row: dict, client: Any) -> None:
+        def _one(idx: int, row: dict[str, Any], client: Any) -> None:
             try:
                 b, k = _resolve(row)
             except (ValueError, TypeError) as exc:
@@ -388,7 +393,7 @@ class ThaS3(AWSBase):
         _label = f"{progress_desc}: downloading files" if progress_desc else "downloading files"
         if workers > 1:
 
-            def _threaded(args: tuple[int, dict]) -> None:
+            def _threaded(args: tuple[int, dict[str, Any]]) -> None:
                 idx, row = args
                 client = s3 if s3 is not None else self._thread_clients().s3()
                 _one(idx, row, client)
