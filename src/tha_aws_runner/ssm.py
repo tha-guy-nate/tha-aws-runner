@@ -41,7 +41,7 @@ class ThaSSM(AWSBase):
             return ssm
         if not hasattr(self._thread_local, "ssm"):
             self._thread_local.ssm = self._thread_clients().ssm()
-        return self._thread_local.ssm  # type: ignore[no-any-return]
+        return self._thread_local.ssm
 
     def read_param(
         self,
@@ -84,7 +84,7 @@ class ThaSSM(AWSBase):
         overwrite: bool = True,
         commit: bool = False,
         ssm: Any = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         path = self._resolve_param_path(path)
         if not commit:
             result: dict[str, Any] = {"path": path, "status": "dry_run"}

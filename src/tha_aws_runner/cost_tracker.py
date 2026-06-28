@@ -89,14 +89,14 @@ class DdbCostTracker:
                 return
             self._hooked[sid] = session
         uid = f"tha-cost-{id(self)}-{sid}"
-        emitter = session._session.get_component("event_emitter")  # type: ignore[attr-defined]
+        emitter = session._session.get_component("event_emitter")
         emitter.register("before-parameter-build.dynamodb.*", self._inject, unique_id=f"{uid}-i")
         emitter.register("after-call.dynamodb.*", self._capture, unique_id=f"{uid}-c")
 
     def _unhook_all(self) -> None:
         for sid, session in self._hooked.items():
             uid = f"tha-cost-{id(self)}-{sid}"
-            emitter = session._session.get_component("event_emitter")  # type: ignore[attr-defined]
+            emitter = session._session.get_component("event_emitter")
             emitter.unregister(
                 "before-parameter-build.dynamodb.*", self._inject, unique_id=f"{uid}-i"
             )
@@ -117,7 +117,7 @@ class DdbCostTracker:
         _orig: Any = type(self._ddb)._thread_clients
 
         def _wrapped(ddb_self: AWSBase) -> AWSClients:
-            clients = _orig(ddb_self)
+            clients: AWSClients = _orig(ddb_self)
             tracker._hook(clients.session)
             return clients
 

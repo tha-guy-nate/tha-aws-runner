@@ -77,7 +77,7 @@ class ThaGsi(AWSBase):
             return dynamodb
         if not hasattr(self._thread_local, "dynamodb"):
             self._thread_local.dynamodb = self._thread_clients().dynamodb()
-        return self._thread_local.dynamodb  # type: ignore[no-any-return]
+        return self._thread_local.dynamodb
 
     def _get_table_desc(self, table_name: str, client: Any) -> dict[str, Any]:
         if table_name in self._table_cache:
@@ -188,7 +188,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str,
         filter_expr: str | None,
         filter_names: dict[str, str] | None,
-        filter_values: dict[str, dict] | None,
+        filter_values: dict[str, dict[str, Any]] | None,
     ) -> dict[str, Any]:
         if sort_key_value is not None:
             if sk_name is None or sk_type is None:
@@ -269,7 +269,7 @@ class ThaGsi(AWSBase):
         total = 0
         while True:
             resp = client.query(**kw)
-            total += resp.get("Count", 0)
+            total += int(resp.get("Count", 0))
             last = resp.get("LastEvaluatedKey")
             if not last:
                 break
@@ -290,7 +290,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         dynamodb: Any = None,
     ) -> list[dict[str, Any]]:
         table_name = self._resolve_table(table_name)
@@ -336,7 +336,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         dynamodb: Any = None,
     ) -> int:
         table_name = self._resolve_table(table_name)
@@ -387,7 +387,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> list[dict[str, Any]]:
@@ -498,7 +498,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         dynamodb: Any = None,
         max_workers: int | None = None,
         show_progress: bool = False,
@@ -579,7 +579,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         dynamodb: Any = None,
         max_workers: int | None = None,
         show_progress: bool = False,
@@ -665,7 +665,7 @@ class ThaGsi(AWSBase):
         sort_key_op: str = "=",
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
-        filter_values: dict[str, dict] | None = None,
+        filter_values: dict[str, dict[str, Any]] | None = None,
         commit: bool = False,
         dynamodb: Any = None,
         max_workers: int | None = None,
