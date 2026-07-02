@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-02
+### Added
+- `tbl_pk_name`, `tbl_pk_type`, `tbl_sk_name`, `tbl_sk_type` parameters to `update_by_gsi` and `batch_update_by_gsi` to bypass `DescribeTable` for table key schema resolution (pass alongside `gsi_hash_key`/`gsi_hash_type` to fully eliminate the control-plane call).
+- `"skipped"` status on `update_by_gsi` and `batch_update_by_gsi` results when the target value already matches — no write is performed and `"old"` is `None`.
+- `"old"` field on `"updated"` rows containing the pre-write attribute map (`ReturnValues="ALL_OLD"`).
+### Changed
+- `increment=True` now uses a conditional `SET` instead of `ADD` — `incr_col` is only incremented when the value actually changed, preventing double-bumps on retries.
+- `_MAX_RETRIES` and `_RETRY_BACKOFF` promoted to module-level constants (were duplicated inline in both methods).
+
 ## [0.2.3] - 2026-06-27
 ### Changed
 - Enabled mypy `strict = true`; all type annotations across `dynamodb`, `gsi`, `s3`, `ssm`, `cost_tracker`, and `aws_base` updated to satisfy strict checks.
