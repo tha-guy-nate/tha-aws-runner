@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from botocore.exceptions import ClientError
 
 from tha_aws_runner.gsi import BatchCountResult, BatchQueryResult, ThaGsi
 
@@ -673,12 +674,35 @@ _UPD_TABLE_WITH_SK_DESC: dict = {
 }
 
 
-def _upd_client(table_desc: dict, gsi_items: list[dict]) -> MagicMock:
+def _upd_client(
+    table_desc: dict,
+    gsi_items: list[dict],
+    update_attrs: dict | None = None,
+) -> MagicMock:
     mock = MagicMock()
     mock.describe_table.return_value = {"Table": table_desc}
     mock.query.return_value = {"Items": gsi_items}
-    mock.update_item.return_value = {}
+    mock.update_item.return_value = {"Attributes": update_attrs} if update_attrs else {}
     return mock
+
+
+def _conditional_check_error() -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "condition failed"}},
+        "UpdateItem",
+    )
+
+
+def _throttle_error() -> ClientError:
+    return ClientError(
+        {
+            "Error": {
+                "Code": "ProvisionedThroughputExceededException",
+                "Message": "throughput exceeded",
+            }
+        },
+        "UpdateItem",
+    )
 
 
 def test_update_by_gsi_dry_run(gsi: ThaGsi) -> None:
@@ -708,14 +732,92 @@ def test_update_by_gsi_commit(gsi: ThaGsi) -> None:
         commit=True,
         dynamodb=c,
     )
-    assert result == [{"order_id": "o1", "status": "updated"}]
+    assert result == [{"order_id": "o1", "status": "updated", "old": None}]
     c.update_item.assert_called_once_with(
         TableName="orders",
         Key={"order_id": {"S": "o1"}},
         UpdateExpression="SET #_upd = :_updv",
         ExpressionAttributeNames={"#_upd": "status"},
         ExpressionAttributeValues={":_updv": {"S": "SHIPPED"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
+
+
+def test_update_by_gsi_commit_old_value_captured(gsi: ThaGsi) -> None:
+    c = _upd_client(
+        _UPD_TABLE_DESC,
+        [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
+        update_attrs={"status": {"S": "PENDING"}, "order_id": {"S": "o1"}},
+    )
+    result = gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "status", "S", "SHIPPED", commit=True, dynamodb=c
+    )
+    assert result[0]["old"] == {"status": {"S": "PENDING"}, "order_id": {"S": "o1"}}
+
+
+def test_update_by_gsi_skipped(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = _conditional_check_error()
+
+    result = gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "status", "S", "SHIPPED", commit=True, dynamodb=mock
+    )
+    assert result[0]["status"] == "skipped"
+    assert "status" in result[0]["message"]
+    assert result[0]["old"] is None
+
+
+def test_update_by_gsi_throttle_retry_succeeds(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = [_throttle_error(), {}]
+
+    result = gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "status", "S", "SHIPPED", commit=True, dynamodb=mock
+    )
+    assert result[0]["status"] == "updated"
+    assert mock.update_item.call_count == 2
+
+
+def test_update_by_gsi_throttle_exhausted(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = [_throttle_error(), _throttle_error()]
+
+    result = gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "status", "S", "SHIPPED", commit=True, dynamodb=mock
+    )
+    assert result[0]["status"] == "error"
+    assert "ProvisionedThroughputExceededException" in result[0]["message"]
+
+
+def test_update_by_gsi_bool_update_type(gsi: ThaGsi) -> None:
+    c = _upd_client(
+        _UPD_TABLE_DESC,
+        [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
+    )
+    gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "active", "BOOL", True, commit=True, dynamodb=c
+    )
+    call_vals = c.update_item.call_args.kwargs["ExpressionAttributeValues"]
+    assert call_vals[":_updv"] == {"BOOL": True}
+
+
+def test_update_by_gsi_null_update_type(gsi: ThaGsi) -> None:
+    c = _upd_client(
+        _UPD_TABLE_DESC,
+        [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}],
+    )
+    gsi.update_by_gsi(
+        "orders", "status-index", "PENDING", "deleted_at", "NULL", None, commit=True, dynamodb=c
+    )
+    call_vals = c.update_item.call_args.kwargs["ExpressionAttributeValues"]
+    assert call_vals[":_updv"] == {"NULL": True}
 
 
 def test_update_by_gsi_multiple_items(gsi: ThaGsi) -> None:
@@ -783,14 +885,52 @@ def test_update_by_gsi_with_table_sort_key(gsi: ThaGsi) -> None:
         commit=True,
         dynamodb=c,
     )
-    assert result == [{"user_id": "u1", "created_at": "2024-01-01", "status": "updated"}]
+    assert result == [
+        {"user_id": "u1", "created_at": "2024-01-01", "status": "updated", "old": None}
+    ]
     c.update_item.assert_called_once_with(
         TableName="events",
         Key={"user_id": {"S": "u1"}, "created_at": {"S": "2024-01-01"}},
         UpdateExpression="SET #_upd = :_updv",
         ExpressionAttributeNames={"#_upd": "processed"},
         ExpressionAttributeValues={":_updv": {"S": "true"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
+
+
+def test_update_by_gsi_tbl_key_override_skips_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.return_value = {}
+    gsi.update_by_gsi(
+        "orders",
+        "status-index",
+        "PENDING",
+        "status",
+        "S",
+        "SHIPPED",
+        gsi_hash_key="status",
+        gsi_hash_type="S",
+        tbl_pk_name="order_id",
+        tbl_pk_type="S",
+        commit=True,
+        dynamodb=mock,
+    )
+    mock.describe_table.assert_not_called()
+
+
+def test_update_by_gsi_projection_fetches_only_keys(gsi: ThaGsi) -> None:
+    c = _upd_client(
+        _UPD_TABLE_DESC,
+        [{"order_id": {"S": "o1"}}],
+    )
+    gsi.update_by_gsi("orders", "status-index", "PENDING", "status", "S", "SHIPPED", dynamodb=c)
+    query_kwargs = c.query.call_args.kwargs
+    assert "ProjectionExpression" in query_kwargs
+    assert "#__tpk" in query_kwargs["ExpressionAttributeNames"]
+    assert query_kwargs["ExpressionAttributeNames"]["#__tpk"] == "order_id"
 
 
 def test_update_by_gsi_partial_error(gsi: ThaGsi) -> None:
@@ -802,7 +942,7 @@ def test_update_by_gsi_partial_error(gsi: ThaGsi) -> None:
             {"order_id": {"S": "o2"}, "status": {"S": "PENDING"}},
         ]
     }
-    mock.update_item.side_effect = [RuntimeError("throttled"), None]
+    mock.update_item.side_effect = [RuntimeError("throttled"), {}]
 
     result = gsi.update_by_gsi(
         "orders",
@@ -887,8 +1027,8 @@ def test_batch_update_by_gsi_commit(gsi: ThaGsi) -> None:
         dynamodb=c,
     )
     assert result.errors == {}
-    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
-    assert result.results["REVIEW"] == [{"order_id": "o2", "status": "updated"}]
+    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated", "old": None}]
+    assert result.results["REVIEW"] == [{"order_id": "o2", "status": "updated", "old": None}]
     assert c.update_item.call_count == 2
 
 
@@ -963,7 +1103,7 @@ def test_batch_update_by_gsi_per_item_error(gsi: ThaGsi) -> None:
             {"order_id": {"S": "o2"}, "status": {"S": "PENDING"}},
         ]
     }
-    mock.update_item.side_effect = [RuntimeError("throttled"), None]
+    mock.update_item.side_effect = [RuntimeError("throttled"), {}]
 
     result = gsi.batch_update_by_gsi(
         "orders",
@@ -979,6 +1119,72 @@ def test_batch_update_by_gsi_per_item_error(gsi: ThaGsi) -> None:
     item_statuses = {r["order_id"]: r["status"] for r in result.results["PENDING"]}
     assert item_statuses["o1"] == "error"
     assert item_statuses["o2"] == "updated"
+
+
+def test_batch_update_by_gsi_skipped(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = _conditional_check_error()
+
+    result = gsi.batch_update_by_gsi(
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="SHIPPED",
+        commit=True,
+        dynamodb=mock,
+    )
+    assert result.results["PENDING"][0]["status"] == "skipped"
+    assert result.results["PENDING"][0]["old"] is None
+
+
+def test_batch_update_by_gsi_throttle_retry_succeeds(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = [_throttle_error(), {}]
+
+    result = gsi.batch_update_by_gsi(
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="SHIPPED",
+        commit=True,
+        dynamodb=mock,
+    )
+    assert result.results["PENDING"][0]["status"] == "updated"
+    assert mock.update_item.call_count == 2
+
+
+def test_batch_update_by_gsi_tbl_key_override_skips_describe(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.side_effect = AssertionError("describe_table must not be called")
+
+    def _query(**kwargs: object) -> dict:
+        return {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+
+    mock.query.side_effect = _query
+    mock.update_item.return_value = {}
+    gsi.batch_update_by_gsi(
+        "orders",
+        "status-index",
+        ["PENDING"],
+        gsi_hash_key="status",
+        gsi_hash_type="S",
+        tbl_pk_name="order_id",
+        tbl_pk_type="S",
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        commit=True,
+        dynamodb=mock,
+    )
+    mock.describe_table.assert_not_called()
 
 
 def test_batch_update_by_gsi_with_rows(gsi: ThaGsi) -> None:
@@ -1072,13 +1278,15 @@ def test_update_by_gsi_increment(gsi: ThaGsi) -> None:
         commit=True,
         dynamodb=c,
     )
-    assert result == [{"order_id": "o1", "status": "updated"}]
+    assert result == [{"order_id": "o1", "status": "updated", "old": None}]
     c.update_item.assert_called_once_with(
         TableName="orders",
         Key={"order_id": {"S": "o1"}},
-        UpdateExpression="ADD #_upd :_updv",
-        ExpressionAttributeNames={"#_upd": "retry_count"},
-        ExpressionAttributeValues={":_updv": {"N": "1"}},
+        UpdateExpression="SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one",
+        ExpressionAttributeNames={"#_upd": "status", "#_inc": "retry_count"},
+        ExpressionAttributeValues={":_updv": {"N": "1"}, ":zero": {"N": "0"}, ":one": {"N": "1"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
 
 
@@ -1114,13 +1322,15 @@ def test_update_by_gsi_incr_col(gsi: ThaGsi) -> None:
         commit=True,
         dynamodb=c,
     )
-    assert result == [{"order_id": "o1", "status": "updated"}]
+    assert result == [{"order_id": "o1", "status": "updated", "old": None}]
     c.update_item.assert_called_once_with(
         TableName="orders",
         Key={"order_id": {"S": "o1"}},
-        UpdateExpression="ADD #_upd :_updv",
-        ExpressionAttributeNames={"#_upd": "view_count"},
-        ExpressionAttributeValues={":_updv": {"N": "1"}},
+        UpdateExpression="SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one",
+        ExpressionAttributeNames={"#_upd": "status", "#_inc": "view_count"},
+        ExpressionAttributeValues={":_updv": {"N": "1"}, ":zero": {"N": "0"}, ":one": {"N": "1"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
 
 
@@ -1157,13 +1367,15 @@ def test_batch_update_by_gsi_increment(gsi: ThaGsi) -> None:
         dynamodb=c,
     )
     assert result.errors == {}
-    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
+    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated", "old": None}]
     c.update_item.assert_called_once_with(
         TableName="orders",
         Key={"order_id": {"S": "o1"}},
-        UpdateExpression="ADD #_upd :_updv",
-        ExpressionAttributeNames={"#_upd": "retry_count"},
-        ExpressionAttributeValues={":_updv": {"N": "1"}},
+        UpdateExpression="SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one",
+        ExpressionAttributeNames={"#_upd": "status", "#_inc": "retry_count"},
+        ExpressionAttributeValues={":_updv": {"N": "1"}, ":zero": {"N": "0"}, ":one": {"N": "1"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
 
 
@@ -1200,13 +1412,15 @@ def test_batch_update_by_gsi_incr_col(gsi: ThaGsi) -> None:
         dynamodb=c,
     )
     assert result.errors == {}
-    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated"}]
+    assert result.results["PENDING"] == [{"order_id": "o1", "status": "updated", "old": None}]
     c.update_item.assert_called_once_with(
         TableName="orders",
         Key={"order_id": {"S": "o1"}},
-        UpdateExpression="ADD #_upd :_updv",
-        ExpressionAttributeNames={"#_upd": "view_count"},
-        ExpressionAttributeValues={":_updv": {"N": "1"}},
+        UpdateExpression="SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one",
+        ExpressionAttributeNames={"#_upd": "status", "#_inc": "view_count"},
+        ExpressionAttributeValues={":_updv": {"N": "1"}, ":zero": {"N": "0"}, ":one": {"N": "1"}},
+        ConditionExpression="attribute_not_exists(#_upd) OR #_upd <> :_updv",
+        ReturnValues="ALL_OLD",
     )
 
 

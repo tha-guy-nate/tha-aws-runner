@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 from tha_aws_runner.aws_base import AWSBase
 from tha_aws_runner.errors import AwsError
-from tha_aws_runner.utils import parse_arn
+from tha_aws_runner.utils import _THROTTLE_CODES, _to_ddb_attr, parse_arn
 
 
 class ThaDdb(AWSBase):
@@ -32,17 +32,9 @@ class ThaDdb(AWSBase):
             aws_session_token=aws_session_token,
         )
 
-    _THROTTLE_CODES = frozenset(
-        {
-            "ProvisionedThroughputExceededException",
-            "ThrottlingException",
-            "RequestLimitExceeded",
-        }
-    )
-
     @staticmethod
     def _is_throttled(code: str | None) -> bool:
-        return code in ThaDdb._THROTTLE_CODES
+        return code in _THROTTLE_CODES
 
     @staticmethod
     def _extract_any(attr: dict[str, Any] | None) -> Any:
@@ -65,49 +57,6 @@ class ThaDdb(AWSBase):
             raise ValueError(f"Could not extract table name from ARN: {table_name!r}")
         return resource_id
 
-    @staticmethod
-    def _to_ddb_attr(val: Any, update_type: str) -> dict[str, Any]:
-        if isinstance(val, dict) and len(val) == 1:
-            t, v = next(iter(val.items()))
-            if t != update_type:
-                raise ValueError(f"Typed value type {t} does not match update_type {update_type}")
-            val = v
-
-        t = update_type.upper()
-
-        if t == "BOOL":
-            if val is True or val is False:
-                return {"BOOL": val}
-            if isinstance(val, str):
-                s = val.strip().lower()
-                if s in ("true", "t", "1", "yes", "y"):
-                    return {"BOOL": True}
-                if s in ("false", "f", "0", "no", "n"):
-                    return {"BOOL": False}
-            raise ValueError("BOOL only allows True/False")
-
-        if t == "S":
-            if val is None:
-                raise ValueError("S does not allow None (use NULL)")
-            return {"S": str(val)}
-
-        if t == "N":
-            if val is None:
-                raise ValueError("N does not allow None (use NULL)")
-            if isinstance(val, (int, float)):
-                return {"N": str(val)}
-            if isinstance(val, str):
-                float(val.strip())
-                return {"N": val.strip()}
-            raise ValueError("N requires int/float or numeric string")
-
-        if t == "NULL":
-            if val not in (None, ""):
-                raise ValueError("NULL expects None/blank")
-            return {"NULL": True}
-
-        raise ValueError(f"Unsupported update_type: {update_type}")
-
     def _client(self, dynamodb: Any = None) -> Any:
         if dynamodb is not None:
             return dynamodb
@@ -125,6 +74,8 @@ class ThaDdb(AWSBase):
         key_type: str | None = None,
         dynamodb: Any = None,
     ) -> dict[str, Any]:
+        if not key_name or not key_type:
+            raise ValueError("key_name and key_type are required")
         table_name = self._resolve_table(table_name)
         dynamodb = self._client(dynamodb)
         key = {key_name: {key_type: partition_key}}
@@ -378,7 +329,7 @@ class ThaDdb(AWSBase):
         MAX_RETRIES = 2
         RETRY_BACKOFF = 0.5
 
-        ddb_update_value = self._to_ddb_attr(update_value, update_type)
+        ddb_update_value = _to_ddb_attr(update_value, update_type)
 
         if not commit:
             result: dict[str, Any] = {"pk": partition_key, "status": "dry_run"}
@@ -490,7 +441,7 @@ class ThaDdb(AWSBase):
         if table_name is not None:
             table_name = self._resolve_table(table_name)
 
-        results: list[dict[str, Any]] = [{}] * len(rows)
+        results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
         _label = f"{progress_desc}: updating by pk" if progress_desc else "updating by pk"
         if workers > 1:
@@ -579,7 +530,7 @@ class ThaDdb(AWSBase):
         if table_name is not None:
             table_name = self._resolve_table(table_name)
 
-        results: list[dict[str, Any]] = [{}] * len(rows)
+        results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
         _label = f"{progress_desc}: deleting by pk" if progress_desc else "deleting by pk"
         if workers > 1:
