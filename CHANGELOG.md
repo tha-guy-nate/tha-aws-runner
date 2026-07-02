@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-01
+### Changed
+- Publish workflow: added `skip-existing: true` on the PyPI publish step and a release-exists guard on GitHub Release creation, so re-triggered runs after a partial failure no longer fail.
+
 ## [0.2.4] - 2026-07-02
 ### Added
 - `tbl_pk_name`, `tbl_pk_type`, `tbl_sk_name`, `tbl_sk_type` parameters to `update_by_gsi` and `batch_update_by_gsi` to bypass `DescribeTable` for table key schema resolution (pass alongside `gsi_hash_key`/`gsi_hash_type` to fully eliminate the control-plane call).
