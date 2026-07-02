@@ -12,6 +12,8 @@ from tha_aws_runner.utils import _THROTTLE_CODES, _to_ddb_attr, parse_arn
 
 _VALID_SK_OPS = frozenset({"=", "<", "<=", ">", ">=", "begins_with", "between"})
 _RESERVED = frozenset({"#_pk", "#_sk", ":_pkv", ":_skv", ":_skv1", ":_skv2"})
+_MAX_RETRIES = 2
+_RETRY_BACKOFF = 0.5
 
 
 def _deser_attr(attr: dict[str, Any]) -> Any:
@@ -453,9 +455,6 @@ class ThaGsi(AWSBase):
         ddb_update_value = _to_ddb_attr(update_value, update_type)
         cond_expr = "attribute_not_exists(#_upd) OR #_upd <> :_updv"
 
-        _MAX_RETRIES = 2
-        _RETRY_BACKOFF = 0.5
-
         results: list[dict[str, Any]] = []
 
         for item in items:
@@ -506,8 +505,7 @@ class ThaGsi(AWSBase):
                     if code == "ConditionalCheckFailedException":
                         row["status"] = "skipped"
                         row["message"] = (
-                            f"The source {update_attr} provided is not different"
-                            f" from the target {update_attr}."
+                            f"{update_attr} already matches the target value; write skipped."
                         )
                         row["old"] = None
                         break
@@ -781,9 +779,6 @@ class ThaGsi(AWSBase):
             proj_names["#__tsk"] = tbl_sk_name
             proj_expr += ", #__tsk"
 
-        _MAX_RETRIES = 2
-        _RETRY_BACKOFF = 0.5
-
         def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
             client = self._client(dynamodb)
             gsi_kwargs = self._build_query_kwargs(
@@ -851,8 +846,7 @@ class ThaGsi(AWSBase):
                         if code == "ConditionalCheckFailedException":
                             row["status"] = "skipped"
                             row["message"] = (
-                                f"The source {update_attr} provided is not different"
-                                f" from the target {update_attr}."
+                                f"{update_attr} already matches the target value; write skipped."
                             )
                             row["old"] = None
                             break
