@@ -1,14 +1,19 @@
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 from tha_aws_runner.aws_base import AWSBase
-from tha_aws_runner.utils import parse_arn
+from tha_aws_runner.utils import _THROTTLE_CODES, _to_ddb_attr, parse_arn
 
 _VALID_SK_OPS = frozenset({"=", "<", "<=", ">", ">=", "begins_with", "between"})
 _RESERVED = frozenset({"#_pk", "#_sk", ":_pkv", ":_skv", ":_skv1", ":_skv2"})
+_MAX_RETRIES = 2
+_RETRY_BACKOFF = 0.5
 
 
 def _deser_attr(attr: dict[str, Any]) -> Any:
@@ -18,6 +23,7 @@ def _deser_attr(attr: dict[str, Any]) -> Any:
 
 
 def _ddb_val(type_key: str, v: Any) -> dict[str, Any]:
+    # Key encoding only (S/N/B). Use _to_ddb_attr for update values.
     return {"B": v} if type_key == "B" else {type_key: str(v)}
 
 
@@ -381,6 +387,10 @@ class ThaGsi(AWSBase):
         gsi_hash_type: str | None = None,
         gsi_range_key: str | None = None,
         gsi_range_type: str | None = None,
+        tbl_pk_name: str | None = None,
+        tbl_pk_type: str | None = None,
+        tbl_sk_name: str | None = None,
+        tbl_sk_type: str | None = None,
         increment: bool = False,
         incr_col: str | None = None,
         sort_key_value: Any = None,
@@ -395,6 +405,10 @@ class ThaGsi(AWSBase):
             raise ValueError("incr_col is required when increment=True")
         if incr_col is not None and not increment:
             raise ValueError("incr_col requires increment=True")
+        if bool(tbl_pk_name) != bool(tbl_pk_type):
+            raise ValueError("pass both tbl_pk_name and tbl_pk_type, or neither")
+        if bool(tbl_sk_name) != bool(tbl_sk_type):
+            raise ValueError("pass both tbl_sk_name and tbl_sk_type, or neither")
         table_name = self._resolve_table(table_name)
         client = self._client(dynamodb)
         gsi_pk_name, gsi_pk_type, gsi_sk_name, gsi_sk_type = self._resolve_gsi_keys(
@@ -406,9 +420,12 @@ class ThaGsi(AWSBase):
             gsi_range_key=gsi_range_key,
             gsi_range_type=gsi_range_type,
         )
-        tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
-            table_name, client
-        )
+        if tbl_pk_name is None:
+            tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
+                table_name, client
+            )
+
+        assert tbl_pk_name is not None and tbl_pk_type is not None
 
         gsi_kwargs = self._build_query_kwargs(
             table_name,
@@ -424,7 +441,19 @@ class ThaGsi(AWSBase):
             filter_names=filter_names,
             filter_values=filter_values,
         )
+        # Project only the table key attributes — the update path never uses other fields.
+        proj_names: dict[str, str] = {"#__tpk": tbl_pk_name}
+        proj_expr = "#__tpk"
+        if tbl_sk_name is not None:
+            proj_names["#__tsk"] = tbl_sk_name
+            proj_expr += ", #__tsk"
+        gsi_kwargs["ExpressionAttributeNames"].update(proj_names)
+        gsi_kwargs["ProjectionExpression"] = proj_expr
+
         items = self._run_query(gsi_kwargs, client)
+
+        ddb_update_value = _to_ddb_attr(update_value, update_type)
+        cond_expr = "attribute_not_exists(#_upd) OR #_upd <> :_updv"
 
         results: list[dict[str, Any]] = []
 
@@ -440,23 +469,56 @@ class ThaGsi(AWSBase):
                 results.append(row)
                 continue
 
-            try:
-                key: dict[str, Any] = {tbl_pk_name: _ddb_val(tbl_pk_type, tbl_pk_val)}
-                if tbl_sk_name is not None and tbl_sk_type is not None:
-                    key[tbl_sk_name] = _ddb_val(tbl_sk_type, item.get(tbl_sk_name))
-                upd_expr = "ADD #_upd :_updv" if increment else "SET #_upd = :_updv"
-                upd_attr = incr_col if increment else update_attr
-                client.update_item(
-                    TableName=table_name,
-                    Key=key,
-                    UpdateExpression=upd_expr,
-                    ExpressionAttributeNames={"#_upd": upd_attr},
-                    ExpressionAttributeValues={":_updv": _ddb_val(update_type, update_value)},
-                )
-                row["status"] = "updated"
-            except Exception as e:
-                row["status"] = "error"
-                row["message"] = str(e)
+            key: dict[str, Any] = {tbl_pk_name: _ddb_val(tbl_pk_type, tbl_pk_val)}
+            if tbl_sk_name is not None and tbl_sk_type is not None:
+                key[tbl_sk_name] = _ddb_val(tbl_sk_type, item.get(tbl_sk_name))
+
+            expr_names: dict[str, str] = {"#_upd": update_attr}
+            expr_vals: dict[str, Any] = {":_updv": ddb_update_value}
+
+            if increment:
+                assert incr_col is not None
+                upd_expr = "SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one"
+                expr_names["#_inc"] = incr_col
+                expr_vals[":zero"] = {"N": "0"}
+                expr_vals[":one"] = {"N": "1"}
+            else:
+                upd_expr = "SET #_upd = :_updv"
+
+            for attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    resp = client.update_item(
+                        TableName=table_name,
+                        Key=key,
+                        UpdateExpression=upd_expr,
+                        ExpressionAttributeNames=expr_names,
+                        ExpressionAttributeValues=expr_vals,
+                        ConditionExpression=cond_expr,
+                        ReturnValues="ALL_OLD",
+                    )
+                    row["status"] = "updated"
+                    row["old"] = resp.get("Attributes")
+                    break
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code")
+                    msg = e.response.get("Error", {}).get("Message")
+                    if code == "ConditionalCheckFailedException":
+                        row["status"] = "skipped"
+                        row["message"] = (
+                            f"{update_attr} already matches the target value; write skipped."
+                        )
+                        row["old"] = None
+                        break
+                    if code in _THROTTLE_CODES and attempt < _MAX_RETRIES:
+                        time.sleep(_RETRY_BACKOFF * (2**attempt))
+                        continue
+                    row["status"] = "error"
+                    row["message"] = f"{code}: {msg}"
+                    break
+                except Exception as e:
+                    row["status"] = "error"
+                    row["message"] = str(e)
+                    break
 
             results.append(row)
 
@@ -654,6 +716,10 @@ class ThaGsi(AWSBase):
         gsi_hash_type: str | None = None,
         gsi_range_key: str | None = None,
         gsi_range_type: str | None = None,
+        tbl_pk_name: str | None = None,
+        tbl_pk_type: str | None = None,
+        tbl_sk_name: str | None = None,
+        tbl_sk_type: str | None = None,
         rows: list[dict[str, Any]] | None = None,
         gsi_col: str | None = None,
         update_attr: str,
@@ -678,6 +744,10 @@ class ThaGsi(AWSBase):
             raise ValueError("incr_col is required when increment=True")
         if incr_col is not None and not increment:
             raise ValueError("incr_col requires increment=True")
+        if bool(tbl_pk_name) != bool(tbl_pk_type):
+            raise ValueError("pass both tbl_pk_name and tbl_pk_type, or neither")
+        if bool(tbl_sk_name) != bool(tbl_sk_type):
+            raise ValueError("pass both tbl_sk_name and tbl_sk_type, or neither")
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         resolved_values = self._resolve_batch_values(
             values, rows, gsi_col, effective_skip, status_col
@@ -693,9 +763,21 @@ class ThaGsi(AWSBase):
             gsi_range_key=gsi_range_key,
             gsi_range_type=gsi_range_type,
         )
-        tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
-            table_name, init_client
-        )
+        if tbl_pk_name is None:
+            tbl_pk_name, tbl_pk_type, tbl_sk_name, tbl_sk_type = self._resolve_table_keys(
+                table_name, init_client
+            )
+
+        assert tbl_pk_name is not None and tbl_pk_type is not None
+
+        ddb_update_value = _to_ddb_attr(update_value, update_type)
+        cond_expr = "attribute_not_exists(#_upd) OR #_upd <> :_updv"
+
+        proj_names: dict[str, str] = {"#__tpk": tbl_pk_name}
+        proj_expr = "#__tpk"
+        if tbl_sk_name is not None:
+            proj_names["#__tsk"] = tbl_sk_name
+            proj_expr += ", #__tsk"
 
         def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
             client = self._client(dynamodb)
@@ -713,6 +795,8 @@ class ThaGsi(AWSBase):
                 filter_names=filter_names,
                 filter_values=filter_values,
             )
+            gsi_kwargs["ExpressionAttributeNames"].update(proj_names)
+            gsi_kwargs["ProjectionExpression"] = proj_expr
             items = self._run_query(gsi_kwargs, client)
 
             item_results: list[dict[str, Any]] = []
@@ -725,23 +809,58 @@ class ThaGsi(AWSBase):
                     row["status"] = "dry_run"
                     item_results.append(row)
                     continue
-                try:
-                    key: dict[str, Any] = {tbl_pk_name: _ddb_val(tbl_pk_type, tbl_pk_val)}
-                    if tbl_sk_name is not None and tbl_sk_type is not None:
-                        key[tbl_sk_name] = _ddb_val(tbl_sk_type, item.get(tbl_sk_name))
-                    upd_expr = "ADD #_upd :_updv" if increment else "SET #_upd = :_updv"
-                    upd_attr = incr_col if increment else update_attr
-                    client.update_item(
-                        TableName=table_name,
-                        Key=key,
-                        UpdateExpression=upd_expr,
-                        ExpressionAttributeNames={"#_upd": upd_attr},
-                        ExpressionAttributeValues={":_updv": _ddb_val(update_type, update_value)},
-                    )
-                    row["status"] = "updated"
-                except Exception as e:
-                    row["status"] = "error"
-                    row["message"] = str(e)
+
+                key: dict[str, Any] = {tbl_pk_name: _ddb_val(tbl_pk_type, tbl_pk_val)}
+                if tbl_sk_name is not None and tbl_sk_type is not None:
+                    key[tbl_sk_name] = _ddb_val(tbl_sk_type, item.get(tbl_sk_name))
+
+                expr_names: dict[str, str] = {"#_upd": update_attr}
+                expr_vals: dict[str, Any] = {":_updv": ddb_update_value}
+
+                if increment:
+                    assert incr_col is not None
+                    upd_expr = "SET #_upd = :_updv, #_inc = if_not_exists(#_inc, :zero) + :one"
+                    expr_names["#_inc"] = incr_col
+                    expr_vals[":zero"] = {"N": "0"}
+                    expr_vals[":one"] = {"N": "1"}
+                else:
+                    upd_expr = "SET #_upd = :_updv"
+
+                for attempt in range(1, _MAX_RETRIES + 1):
+                    try:
+                        resp = client.update_item(
+                            TableName=table_name,
+                            Key=key,
+                            UpdateExpression=upd_expr,
+                            ExpressionAttributeNames=expr_names,
+                            ExpressionAttributeValues=expr_vals,
+                            ConditionExpression=cond_expr,
+                            ReturnValues="ALL_OLD",
+                        )
+                        row["status"] = "updated"
+                        row["old"] = resp.get("Attributes")
+                        break
+                    except ClientError as e:
+                        code = e.response.get("Error", {}).get("Code")
+                        msg = e.response.get("Error", {}).get("Message")
+                        if code == "ConditionalCheckFailedException":
+                            row["status"] = "skipped"
+                            row["message"] = (
+                                f"{update_attr} already matches the target value; write skipped."
+                            )
+                            row["old"] = None
+                            break
+                        if code in _THROTTLE_CODES and attempt < _MAX_RETRIES:
+                            time.sleep(_RETRY_BACKOFF * (2**attempt))
+                            continue
+                        row["status"] = "error"
+                        row["message"] = f"{code}: {msg}"
+                        break
+                    except Exception as e:
+                        row["status"] = "error"
+                        row["message"] = str(e)
+                        break
+
                 item_results.append(row)
 
             return v, item_results

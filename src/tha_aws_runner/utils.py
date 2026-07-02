@@ -2,6 +2,57 @@ from typing import Any
 
 from tha_aws_runner.aws_base import AWSClients
 
+_THROTTLE_CODES = frozenset(
+    {
+        "ProvisionedThroughputExceededException",
+        "ThrottlingException",
+        "RequestLimitExceeded",
+    }
+)
+
+
+def _to_ddb_attr(val: Any, update_type: str) -> dict[str, Any]:
+    if isinstance(val, dict) and len(val) == 1:
+        t, v = next(iter(val.items()))
+        if t != update_type:
+            raise ValueError(f"Typed value type {t} does not match update_type {update_type}")
+        val = v
+
+    t = update_type.upper()
+
+    if t == "BOOL":
+        if val is True or val is False:
+            return {"BOOL": val}
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("true", "t", "1", "yes", "y"):
+                return {"BOOL": True}
+            if s in ("false", "f", "0", "no", "n"):
+                return {"BOOL": False}
+        raise ValueError("BOOL only allows True/False")
+
+    if t == "S":
+        if val is None:
+            raise ValueError("S does not allow None (use NULL)")
+        return {"S": str(val)}
+
+    if t == "N":
+        if val is None:
+            raise ValueError("N does not allow None (use NULL)")
+        if isinstance(val, (int, float)):
+            return {"N": str(val)}
+        if isinstance(val, str):
+            float(val.strip())
+            return {"N": val.strip()}
+        raise ValueError("N requires int/float or numeric string")
+
+    if t == "NULL":
+        if val not in (None, ""):
+            raise ValueError("NULL expects None/blank")
+        return {"NULL": True}
+
+    raise ValueError(f"Unsupported update_type: {update_type}")
+
 
 def parse_arn(arn: str) -> dict[str, str | None]:
     """Parse any AWS ARN into its components.
