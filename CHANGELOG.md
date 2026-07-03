@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-07-03
+### Added
+- Python 3.14 classifier and CI support.
+- PR template (What/Why/How + Test Plan sections), part of a cross-repo consistency sweep.
+
 ## [0.2.5] - 2026-07-01
 ### Changed
 - Publish workflow: added `skip-existing: true` on the PyPI publish step and a release-exists guard on GitHub Release creation, so re-triggered runs after a partial failure no longer fail.
