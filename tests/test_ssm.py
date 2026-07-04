@@ -1,4 +1,6 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tha_aws_runner.ssm import ThaSSM
 
@@ -143,6 +145,25 @@ def test_read_param_arn():
     result = ssm.read_param(_PARAM_ARN)
     assert result == "secret-value"
     mock_client.get_parameter.assert_called_once_with(Name="/my/app/secret", WithDecryption=False)
+
+
+def test_resolve_param_path_raises_when_arn_has_no_resource_id():
+    with pytest.raises(ValueError, match="Could not extract parameter path"):
+        ThaSSM._resolve_param_path("arn:aws:ssm:us-east-1:123456789012:parameter/")
+
+
+def test_client_builds_and_caches_lazily():
+    ssm = ThaSSM(region="us-east-1")
+    mock_client = MagicMock()
+    mock_client.get_parameter.return_value = {"Parameter": {"Value": "lazy-value"}}
+
+    with patch.object(type(ssm), "_thread_clients") as mock_thread_clients:
+        mock_thread_clients.return_value.ssm.return_value = mock_client
+        result = ssm.read_param("/my/param")
+        ssm.read_param("/my/param")
+
+    mock_thread_clients.return_value.ssm.assert_called_once()
+    assert result == "lazy-value"
 
 
 def test_write_param_arn():

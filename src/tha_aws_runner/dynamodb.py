@@ -406,10 +406,15 @@ class ThaDdb(AWSBase):
                     self.rows = result
                 return result
 
-        result = {"pk": partition_key, "status": "error", "message": "Max retries exceeded"}
-        if _set_rows:
+        # every loop iteration returns; this fallback is unreachable
+        result = {  # pragma: no cover
+            "pk": partition_key,
+            "status": "error",
+            "message": "Max retries exceeded",
+        }
+        if _set_rows:  # pragma: no cover
             self.rows = result
-        return result
+        return result  # pragma: no cover
 
     def batch_update_by_pk(
         self,
@@ -711,7 +716,12 @@ class ThaDdb(AWSBase):
                     self.rows = result
                 return result
 
-        result = {"pk": partition_key, "status": "error", "message": "Max retries exceeded"}
-        if _set_rows:
+        # every loop iteration returns; this fallback is unreachable
+        result = {  # pragma: no cover
+            "pk": partition_key,
+            "status": "error",
+            "message": "Max retries exceeded",
+        }
+        if _set_rows:  # pragma: no cover
             self.rows = result
-        return result
+        return result  # pragma: no cover

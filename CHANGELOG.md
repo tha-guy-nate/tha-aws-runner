@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-07-04
+### Fixed
+- Test coverage gaps across the whole package (88% → 100%): added tests for `AWSClients`'s 21 thin service-client accessors (previously entirely untested), `AWSBase._thread_clients`/`_progress_update`, lazy service-building in `ThaDdb`/`ThaGsi`/`ThaS3`/`ThaSSM`, `ThaGsi._resolve_table_keys` (previously untested — no fixture exercised the table's own KeySchema resolution), retry/unprocessed-keys handling in `batch_fetch_by_pk` and `batch_write`, throttle-retry and generic-`ClientError` paths in `update_by_pk`/`delete_by_pk`/`batch_update_by_gsi`, and smaller edge cases in `utils.py` (`_to_ddb_attr`, `parse_arn`, `current_identity` — previously untested), `s3.py` (CLI-mode progress bars, `export`), and `cost_tracker.py`.
+- Marked a few genuinely unreachable defensive branches `pragma: no cover`: dead regex fallbacks in ARN-based table/bucket-name parsing, and post-loop fallback returns in `update_by_pk`/`delete_by_pk` that can't execute since every loop iteration already returns.
+
 ## [0.2.6] - 2026-07-03
 ### Added
 - Python 3.14 classifier and CI support.
