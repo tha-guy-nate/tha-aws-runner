@@ -1,5 +1,5 @@
 from io import BytesIO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -459,6 +459,48 @@ def test_resolve_bucket_arn():
 
 def test_resolve_bucket_from_object_arn():
     assert ThaS3._resolve_bucket(_OBJECT_ARN) == "my-bucket"
+
+
+def test_resolve_bucket_raises_when_arn_has_no_bucket():
+    with pytest.raises(ValueError, match="Could not extract bucket name"):
+        ThaS3._resolve_bucket("arn:aws:s3:::")
+
+
+def test_client_builds_and_caches_lazily():
+    s3 = ThaS3(region="us-east-1")
+    mock_client = MagicMock()
+    mock_client.put_object.return_value = {}
+
+    with patch.object(type(s3), "_thread_clients") as mock_thread_clients:
+        mock_thread_clients.return_value.s3.return_value = mock_client
+        s3.upload_file("my-bucket", "k", data=b"x", commit=True)
+        s3.upload_file("my-bucket", "k", data=b"x", commit=True)
+
+    mock_thread_clients.return_value.s3.assert_called_once()
+
+
+def test_upload_file_cli_mode_shows_progress(mock_s3_client):
+    mock_s3_client.upload_fileobj.return_value = None
+    s3 = make_s3(mock_s3_client)
+    s3.mode = "cli"
+    result = s3.upload_file("my-bucket", "k", data=b"hello world", commit=True)
+    assert result["status"] == "uploaded"
+    mock_s3_client.upload_fileobj.assert_called_once()
+    call_kwargs = mock_s3_client.upload_fileobj.call_args
+    assert call_kwargs.args[1] == "my-bucket"
+    assert call_kwargs.args[2] == "k"
+
+
+def test_download_file_cli_mode_shows_progress(mock_s3_client):
+    mock_s3_client.get_object.return_value = {
+        "ContentLength": 5,
+        "Body": MagicMock(iter_chunks=lambda chunk_size: iter([b"hello"])),
+    }
+    s3 = make_s3(mock_s3_client)
+    s3.mode = "cli"
+    result = s3.download_file("my-bucket", "k")
+    assert result["bytes"] == 5
+    assert result["data"] == b"hello"
 
 
 def test_resolve_uri_or_arn_s3_uri():

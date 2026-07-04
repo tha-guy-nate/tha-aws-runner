@@ -1,6 +1,8 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from tha_aws_runner.aws_base import AWSClients
+import pytest
+
+from tha_aws_runner.aws_base import AWSBase, AWSClients
 from tha_aws_runner.utils import cli_auth_check, parse_arn, parse_assumed_role_arn
 
 
@@ -117,3 +119,79 @@ def test_aws_clients_no_inline_creds_passes_none():
     assert call_kwargs["aws_access_key_id"] is None
     assert call_kwargs["aws_secret_access_key"] is None
     assert call_kwargs["aws_session_token"] is None
+
+
+# --- AWSClients service accessors ---
+
+_CLIENT_ACCESSORS = {
+    "sts": "sts",
+    "iam": "iam",
+    "rds": "rds",
+    "s3": "s3",
+    "ssm": "ssm",
+    "secretsmanager": "secretsmanager",
+    "lambda_": "lambda",
+    "ec2": "ec2",
+    "ecs": "ecs",
+    "ecr": "ecr",
+    "cloudwatch": "cloudwatch",
+    "logs": "logs",
+    "sns": "sns",
+    "sqs": "sqs",
+    "eventbridge": "events",
+    "athena": "athena",
+    "glue": "glue",
+    "kinesis": "kinesis",
+    "dynamodb": "dynamodb",
+}
+
+_RESOURCE_ACCESSORS = {
+    "dynamodb_resource": "dynamodb",
+    "s3_resource": "s3",
+}
+
+
+@pytest.mark.parametrize(("method_name", "service_name"), _CLIENT_ACCESSORS.items())
+def test_client_accessor_requests_correct_service(method_name: str, service_name: str) -> None:
+    with patch("boto3.Session") as mock_session_cls:
+        mock_session = mock_session_cls.return_value
+        clients = AWSClients()
+        getattr(clients, method_name)()
+    mock_session.client.assert_called_once_with(service_name)
+
+
+@pytest.mark.parametrize(("method_name", "service_name"), _RESOURCE_ACCESSORS.items())
+def test_resource_accessor_requests_correct_service(method_name: str, service_name: str) -> None:
+    with patch("boto3.Session") as mock_session_cls:
+        mock_session = mock_session_cls.return_value
+        clients = AWSClients()
+        getattr(clients, method_name)()
+    mock_session.resource.assert_called_once_with(service_name)
+
+
+# --- AWSBase ---
+
+
+def test_thread_clients_caches_per_thread() -> None:
+    with patch("boto3.Session"):
+        base = AWSBase()
+        first = base._thread_clients()
+        second = base._thread_clients()
+    assert first is second
+    assert isinstance(first, AWSClients)
+
+
+def test_progress_update_calls_status_cb_in_app_mode() -> None:
+    status_cb = MagicMock()
+    with patch("boto3.Session"):
+        base = AWSBase(status_cb=status_cb, mode="app")
+        base._progress_update("hello")
+    status_cb.assert_called_once_with("hello")
+
+
+def test_progress_update_skips_status_cb_in_cli_mode() -> None:
+    status_cb = MagicMock()
+    with patch("boto3.Session"):
+        base = AWSBase(status_cb=status_cb, mode="cli")
+        base._progress_update("hello")
+    status_cb.assert_not_called()

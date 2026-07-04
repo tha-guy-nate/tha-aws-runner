@@ -1,9 +1,9 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 
-from tha_aws_runner.gsi import BatchCountResult, BatchQueryResult, ThaGsi
+from tha_aws_runner.gsi import BatchCountResult, BatchQueryResult, ThaGsi, _deser_attr
 
 # GSI with partition key only
 _TABLE_DESC: dict = {
@@ -142,6 +142,27 @@ def test_arn_table_resolved(gsi: ThaGsi) -> None:
     c.describe_table.assert_called_once_with(TableName="users")
 
 
+def test_resolve_table_raises_when_arn_has_no_table_name(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="Could not extract table name"):
+        gsi._resolve_table("arn:aws:dynamodb:us-east-1:123456789012:table/")
+
+
+def test_client_builds_and_caches_lazily(gsi: ThaGsi) -> None:
+    mock_client = MagicMock()
+    mock_client.describe_table.return_value = {"Table": _TABLE_DESC}
+    mock_client.query.side_effect = [{"Items": []}]
+
+    with patch.object(type(gsi), "_thread_clients") as mock_thread_clients:
+        mock_thread_clients.return_value.dynamodb.return_value = mock_client
+        gsi.query("users", "email-index", "a@x.com")
+
+    mock_thread_clients.return_value.dynamodb.assert_called_once()
+
+
+def test_deser_attr_empty_returns_none() -> None:
+    assert _deser_attr({}) is None
+
+
 def test_resolve_gsi_keys_no_hash_raises(gsi: ThaGsi) -> None:
     desc = {
         "TableName": "t",
@@ -168,6 +189,79 @@ def test_resolve_gsi_keys_missing_attr_def_raises(gsi: ThaGsi) -> None:
     c.describe_table.return_value = {"Table": desc}
     with pytest.raises(ValueError, match="AttributeDefinition not found for 'x'"):
         gsi.query("t", "x-index", "v", dynamodb=c)
+
+
+def test_resolve_gsi_keys_missing_sk_attr_def_raises(gsi: ThaGsi) -> None:
+    desc = {
+        "TableName": "t",
+        "AttributeDefinitions": [{"AttributeName": "x", "AttributeType": "S"}],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "x-index",
+                "KeySchema": [
+                    {"AttributeName": "x", "KeyType": "HASH"},
+                    {"AttributeName": "y", "KeyType": "RANGE"},
+                ],
+            },
+        ],
+    }
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": desc}
+    with pytest.raises(ValueError, match="AttributeDefinition not found for 'y'"):
+        gsi.query("t", "x-index", "v", dynamodb=c)
+
+
+def test_resolve_table_keys_no_hash_raises(gsi: ThaGsi) -> None:
+    desc = {"TableName": "t", "AttributeDefinitions": [], "KeySchema": []}
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": desc}
+    with pytest.raises(ValueError, match="No HASH key found in table 't'"):
+        gsi._resolve_table_keys("t", c)
+
+
+def test_resolve_table_keys_missing_pk_attr_def_raises(gsi: ThaGsi) -> None:
+    desc = {
+        "TableName": "t2",
+        "AttributeDefinitions": [],
+        "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}],
+    }
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": desc}
+    with pytest.raises(ValueError, match="AttributeDefinition not found for table PK 'pk'"):
+        gsi._resolve_table_keys("t2", c)
+
+
+def test_resolve_table_keys_missing_sk_attr_def_raises(gsi: ThaGsi) -> None:
+    desc = {
+        "TableName": "t3",
+        "AttributeDefinitions": [{"AttributeName": "pk", "AttributeType": "S"}],
+        "KeySchema": [
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+    }
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": desc}
+    with pytest.raises(ValueError, match="AttributeDefinition not found for table SK 'sk'"):
+        gsi._resolve_table_keys("t3", c)
+
+
+def test_resolve_table_keys_with_sort_key(gsi: ThaGsi) -> None:
+    desc = {
+        "TableName": "t4",
+        "AttributeDefinitions": [
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
+        "KeySchema": [
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+    }
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": desc}
+    result = gsi._resolve_table_keys("t4", c)
+    assert result == ("pk", "S", "sk", "S")
 
 
 # --- sort key ---
@@ -756,6 +850,34 @@ def test_update_by_gsi_commit_old_value_captured(gsi: ThaGsi) -> None:
     assert result[0]["old"] == {"status": {"S": "PENDING"}, "order_id": {"S": "o1"}}
 
 
+def test_update_by_gsi_tbl_pk_name_without_type_raises(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="pass both tbl_pk_name and tbl_pk_type"):
+        gsi.update_by_gsi(
+            "orders",
+            "status-index",
+            "PENDING",
+            "status",
+            "S",
+            "SHIPPED",
+            tbl_pk_name="order_id",
+            dynamodb=MagicMock(),
+        )
+
+
+def test_update_by_gsi_tbl_sk_name_without_type_raises(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="pass both tbl_sk_name and tbl_sk_type"):
+        gsi.update_by_gsi(
+            "orders",
+            "status-index",
+            "PENDING",
+            "status",
+            "S",
+            "SHIPPED",
+            tbl_sk_name="created_at",
+            dynamodb=MagicMock(),
+        )
+
+
 def test_update_by_gsi_skipped(gsi: ThaGsi) -> None:
     mock = MagicMock()
     mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
@@ -1121,6 +1243,56 @@ def test_batch_update_by_gsi_per_item_error(gsi: ThaGsi) -> None:
     assert item_statuses["o2"] == "updated"
 
 
+def test_batch_update_by_gsi_client_error_captured(gsi: ThaGsi) -> None:
+    mock = MagicMock()
+    mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
+    mock.query.return_value = {"Items": [{"order_id": {"S": "o1"}, "status": {"S": "PENDING"}}]}
+    mock.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "bad request"}}, "UpdateItem"
+    )
+
+    result = gsi.batch_update_by_gsi(
+        "orders",
+        "status-index",
+        ["PENDING"],
+        update_attr="status",
+        update_type="S",
+        update_value="DONE",
+        commit=True,
+        dynamodb=mock,
+    )
+    row = result.results["PENDING"][0]
+    assert row["status"] == "error"
+    assert row["message"] == "ValidationException: bad request"
+
+
+def test_batch_update_by_gsi_with_table_sort_key(gsi: ThaGsi) -> None:
+    c = MagicMock()
+    c.describe_table.return_value = {"Table": _UPD_TABLE_WITH_SK_DESC}
+    c.query.return_value = {"Items": [{"user_id": {"S": "u1"}, "created_at": {"S": "2024-01-01"}}]}
+    c.update_item.return_value = {}
+
+    result = gsi.batch_update_by_gsi(
+        "events",
+        "type-index",
+        ["click"],
+        update_attr="processed",
+        update_type="S",
+        update_value="true",
+        commit=True,
+        dynamodb=c,
+    )
+    row = result.results["click"][0]
+    assert row == {
+        "user_id": "u1",
+        "created_at": "2024-01-01",
+        "status": "updated",
+        "old": None,
+    }
+    query_kwargs = c.query.call_args.kwargs
+    assert "#__tsk" in query_kwargs["ExpressionAttributeNames"]
+
+
 def test_batch_update_by_gsi_skipped(gsi: ThaGsi) -> None:
     mock = MagicMock()
     mock.describe_table.return_value = {"Table": _UPD_TABLE_DESC}
@@ -1258,6 +1430,34 @@ def test_batch_update_by_gsi_bad_index_raises(gsi: ThaGsi) -> None:
             update_type="S",
             update_value="DONE",
             dynamodb=c,
+        )
+
+
+def test_batch_update_by_gsi_tbl_pk_name_without_type_raises(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="pass both tbl_pk_name and tbl_pk_type"):
+        gsi.batch_update_by_gsi(
+            "orders",
+            "status-index",
+            ["PENDING"],
+            tbl_pk_name="order_id",
+            update_attr="status",
+            update_type="S",
+            update_value="DONE",
+            dynamodb=MagicMock(),
+        )
+
+
+def test_batch_update_by_gsi_tbl_sk_name_without_type_raises(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="pass both tbl_sk_name and tbl_sk_type"):
+        gsi.batch_update_by_gsi(
+            "orders",
+            "status-index",
+            ["PENDING"],
+            tbl_sk_name="created_at",
+            update_attr="status",
+            update_type="S",
+            update_value="DONE",
+            dynamodb=MagicMock(),
         )
 
 

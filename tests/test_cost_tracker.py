@@ -335,6 +335,16 @@ def test_exit_restores_thread_clients() -> None:
     assert "_thread_clients" not in ddb.__dict__
 
 
+def test_exit_without_enter_is_a_noop() -> None:
+    ddb = make_ddb()
+    mock_sess = _mock_session()
+    ddb.clients.session = mock_sess
+
+    tracker = DdbCostTracker(ddb)
+    tracker.__exit__(None, None, None)  # never entered — no _thread_clients override to remove
+    assert "_thread_clients" not in ddb.__dict__
+
+
 def test_hook_is_idempotent() -> None:
     ddb = make_ddb()
     mock_sess = _mock_session()

@@ -1,9 +1,10 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 
 from tha_aws_runner.dynamodb import ThaDdb
+from tha_aws_runner.errors import AwsError
 
 
 def _client_error(code: str, message: str = "error") -> ClientError:
@@ -221,6 +222,80 @@ def test_batch_fetch_by_pk_deduplicates_rows(mock_ddb_client):
     assert result["my_table"]["pk1"]["status"] is None
 
 
+def test_batch_fetch_by_pk_skips_item_missing_pk_attribute(mock_ddb_client):
+    mock_ddb_client.batch_get_item.return_value = {
+        "Responses": {
+            "my_table": [
+                {"other_field": {"S": "no-key-here"}},
+                {"id": {"S": "pk1"}, "name": {"S": "Alice"}},
+            ]
+        },
+        "UnprocessedKeys": {},
+    }
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.batch_fetch_by_pk(
+        [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S"
+    )
+    assert result["my_table"]["pk1"]["status"] is None
+    assert len(result["my_table"]) == 1
+
+
+def test_batch_fetch_by_pk_retries_unprocessed_then_succeeds(mock_ddb_client):
+    mock_ddb_client.batch_get_item.side_effect = [
+        {
+            "Responses": {"my_table": []},
+            "UnprocessedKeys": {"my_table": {"Keys": [{"id": {"S": "pk1"}}]}},
+        },
+        {
+            "Responses": {"my_table": [{"id": {"S": "pk1"}, "name": {"S": "Alice"}}]},
+            "UnprocessedKeys": {},
+        },
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.batch_fetch_by_pk(
+            [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S"
+        )
+    assert result["my_table"]["pk1"]["status"] is None
+    assert mock_ddb_client.batch_get_item.call_count == 2
+
+
+def test_batch_fetch_by_pk_retry_client_error_captured(mock_ddb_client):
+    mock_ddb_client.batch_get_item.side_effect = [
+        {
+            "Responses": {"my_table": []},
+            "UnprocessedKeys": {"my_table": {"Keys": [{"id": {"S": "pk1"}}]}},
+        },
+        _client_error("ProvisionedThroughputExceededException", "throttled"),
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.batch_fetch_by_pk(
+            [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S"
+        )
+    assert result["my_table"]["pk1"]["status"] == "error"
+    assert result["my_table"]["pk1"]["message"] == "throttled"
+
+
+def test_batch_fetch_by_pk_unprocessed_after_max_retries(mock_ddb_client):
+    always_unprocessed = {
+        "Responses": {"my_table": []},
+        "UnprocessedKeys": {"my_table": {"Keys": [{"id": {"S": "pk1"}}]}},
+    }
+    mock_ddb_client.batch_get_item.side_effect = [
+        always_unprocessed,
+        always_unprocessed,
+        always_unprocessed,
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.batch_fetch_by_pk(
+            [{"ref": "pk1"}], "ref", table_name="my_table", key_name="id", key_type="S"
+        )
+    assert result["my_table"]["pk1"]["status"] == "error"
+    assert "Unprocessed after" in result["my_table"]["pk1"]["message"]
+
+
 def test_batch_fetch_by_pk_requires_exactly_one_table_arg(mock_ddb_client):
     ddb = make_ddb(mock_ddb_client)
     with pytest.raises(ValueError, match="exactly one"):
@@ -304,6 +379,63 @@ def test_update_by_pk_to_ddb_attr_invalid_bool():
     ddb._thread_local.dynamodb = mock_client
     with pytest.raises(ValueError, match="BOOL only allows"):
         ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", "maybe")
+
+
+def test_update_by_pk_with_increment_attr(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {"Attributes": {"id": {"S": "pk1"}}}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        "my_table",
+        "pk1",
+        "id",
+        "S",
+        "status",
+        "S",
+        "active",
+        increment_attr="update_count",
+        commit=True,
+    )
+    assert result["status"] == "updated"
+    call_kwargs = mock_ddb_client.update_item.call_args.kwargs
+    assert call_kwargs["ExpressionAttributeNames"]["#INC"] == "update_count"
+    assert "#INC = if_not_exists(#INC, :zero) + :one" in call_kwargs["UpdateExpression"]
+    assert call_kwargs["ExpressionAttributeValues"][":zero"] == {"N": "0"}
+    assert call_kwargs["ExpressionAttributeValues"][":one"] == {"N": "1"}
+
+
+def test_update_by_pk_throttle_retry_succeeds(mock_ddb_client):
+    mock_ddb_client.update_item.side_effect = [
+        _client_error("ProvisionedThroughputExceededException", "throttled"),
+        {"Attributes": {"id": {"S": "pk1"}}},
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.update_by_pk(
+            "my_table", "pk1", "id", "S", "status", "S", "active", commit=True
+        )
+    assert result["status"] == "updated"
+    assert mock_ddb_client.update_item.call_count == 2
+
+
+def test_update_by_pk_throttle_exhausted(mock_ddb_client):
+    mock_ddb_client.update_item.side_effect = _client_error(
+        "ProvisionedThroughputExceededException", "throttled"
+    )
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.update_by_pk(
+            "my_table", "pk1", "id", "S", "status", "S", "active", commit=True
+        )
+    assert result["status"] == "error"
+    assert "throttled" in result["message"]
+
+
+def test_update_by_pk_generic_client_error(mock_ddb_client):
+    mock_ddb_client.update_item.side_effect = _client_error("ValidationException", "bad request")
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
+    assert result["status"] == "error"
+    assert result["message"] == "ValidationException: bad request"
 
 
 def test_update_by_pk_dry_run(mock_ddb_client):
@@ -601,6 +733,40 @@ def test_batch_write_chunks_at_25(mock_ddb_client):
     assert mock_ddb_client.batch_write_item.call_count == 2
 
 
+def test_batch_write_retries_unprocessed_then_succeeds(mock_ddb_client):
+    item = {"id": {"S": "pk0"}}
+    mock_ddb_client.batch_write_item.side_effect = [
+        {"UnprocessedItems": {"my_table": [{"PutRequest": {"Item": item}}]}},
+        {"UnprocessedItems": {}},
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.batch_write("my_table", [item], commit=True)
+    assert result["written"] == 1
+    assert mock_ddb_client.batch_write_item.call_count == 2
+
+
+def test_batch_write_raises_awserror_on_client_error(mock_ddb_client):
+    mock_ddb_client.batch_write_item.side_effect = _client_error(
+        "ProvisionedThroughputExceededException", "throttled"
+    )
+    ddb = make_ddb(mock_ddb_client)
+    with pytest.raises(AwsError, match="DynamoDB batch write failed: throttled"):
+        ddb.batch_write("my_table", [{"id": {"S": "pk0"}}], commit=True)
+
+
+def test_batch_write_raises_awserror_after_max_retries(mock_ddb_client):
+    item = {"id": {"S": "pk0"}}
+    always_unprocessed = {"UnprocessedItems": {"my_table": [{"PutRequest": {"Item": item}}]}}
+    mock_ddb_client.batch_write_item.side_effect = [
+        always_unprocessed,
+        always_unprocessed,
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"), pytest.raises(AwsError, match="Unprocessed write requests remain"):
+        ddb.batch_write("my_table", [item], commit=True)
+
+
 # --- delete_by_pk ---
 
 
@@ -628,6 +794,37 @@ def test_delete_by_pk_skipped_when_not_exists(mock_ddb_client):
     assert result["message"] == "Item does not exist"
 
 
+def test_delete_by_pk_throttle_retry_succeeds(mock_ddb_client):
+    mock_ddb_client.delete_item.side_effect = [
+        _client_error("ProvisionedThroughputExceededException", "throttled"),
+        {},
+    ]
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
+    assert result["status"] == "deleted"
+    assert mock_ddb_client.delete_item.call_count == 2
+
+
+def test_delete_by_pk_throttle_exhausted(mock_ddb_client):
+    mock_ddb_client.delete_item.side_effect = _client_error(
+        "ProvisionedThroughputExceededException", "throttled"
+    )
+    ddb = make_ddb(mock_ddb_client)
+    with patch("time.sleep"):
+        result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
+    assert result["status"] == "error"
+    assert "throttled" in result["message"]
+
+
+def test_delete_by_pk_generic_client_error(mock_ddb_client):
+    mock_ddb_client.delete_item.side_effect = _client_error("ValidationException", "bad request")
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.delete_by_pk("my_table", "pk1", "id", "S", commit=True)
+    assert result["status"] == "error"
+    assert result["message"] == "ValidationException: bad request"
+
+
 # --- ARN resolution ---
 
 _TABLE_ARN = "arn:aws:dynamodb:us-east-1:123456789012:table/my_table"
@@ -639,6 +836,48 @@ def test_resolve_table_plain():
 
 def test_resolve_table_arn():
     assert ThaDdb._resolve_table(_TABLE_ARN) == "my_table"
+
+
+def test_resolve_table_raises_when_arn_has_no_table_name():
+    with pytest.raises(ValueError, match="Could not extract table name"):
+        ThaDdb._resolve_table("arn:aws:dynamodb:us-east-1:123456789012:table/")
+
+
+def test_client_builds_and_caches_lazily():
+    ddb = ThaDdb(region="us-east-1")
+    mock_client = MagicMock()
+    mock_client.get_item.return_value = {"Item": {"id": {"S": "pk1"}}}
+
+    with patch.object(type(ddb), "_thread_clients") as mock_thread_clients:
+        mock_thread_clients.return_value.dynamodb.return_value = mock_client
+        ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
+        ddb.fetch_by_pk("my_table", "pk1", key_name="id", key_type="S")
+
+    mock_thread_clients.return_value.dynamodb.assert_called_once()
+
+
+def test_is_throttled_true():
+    assert ThaDdb._is_throttled("ProvisionedThroughputExceededException") is True
+
+
+def test_is_throttled_false():
+    assert ThaDdb._is_throttled("AccessDeniedException") is False
+
+
+def test_extract_any_empty_returns_none():
+    assert ThaDdb._extract_any({}) is None
+    assert ThaDdb._extract_any(None) is None
+
+
+def test_extract_typed_empty_returns_none():
+    assert ThaDdb._extract_typed({}) is None
+    assert ThaDdb._extract_typed(None) is None
+
+
+def test_fetch_by_pk_requires_key_name_and_type(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    with pytest.raises(ValueError, match="key_name and key_type are required"):
+        ddb.fetch_by_pk("my_table", "pk1")
 
 
 def test_fetch_by_pk_arn(mock_ddb_client):
