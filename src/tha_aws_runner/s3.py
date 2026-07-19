@@ -390,7 +390,7 @@ class ThaS3(AWSBase):
             except Exception as exc:
                 results[idx] = {"bucket": b, "key": k, "status": "error", "message": str(exc)}
 
-        _label = f"{progress_desc}: downloading files" if progress_desc else "downloading files"
+        _label = f"{progress_desc}: Downloading files" if progress_desc else "Downloading files"
         if workers > 1:
 
             def _threaded(args: tuple[int, dict[str, Any]]) -> None:

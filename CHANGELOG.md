@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-07-18
+### Fixed
+- tqdm progress labels are now capitalized (e.g. "Updating by pk" instead of "updating by pk") across `ThaDdb`, `ThaGsi`, and `ThaS3`.
+- `batch_update_by_pk`, `batch_delete_by_pk`, and `batch_update_by_gsi` now append `" (dry run)"` to the progress label when `commit=False`, since the progress bar runs on every row regardless of commit and previously gave no visual indication that no writes were happening.
+- `src/tha_aws_runner/__init__.py`'s `__version__` was still `0.2.7` while `pyproject.toml` had already moved to `0.2.8` (missed in #23) — resynced.
+
 ## [0.2.8] - 2026-07-04
 ### Fixed
 - Added missing `s3` to `pyproject.toml` `keywords` — the description and GitHub topics both call out S3 support, but the PyPI keyword list omitted it.

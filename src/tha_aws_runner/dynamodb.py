@@ -268,7 +268,7 @@ class ThaDdb(AWSBase):
                 records_dict.setdefault(tbl, {}).update(tbl_records)
             found_ids.update(local_found)
 
-        _label = f"{progress_desc}: fetching by pk" if progress_desc else "fetching by pk"
+        _label = f"{progress_desc}: Fetching by pk" if progress_desc else "Fetching by pk"
         if workers > 1:
 
             def _threaded(
@@ -448,7 +448,9 @@ class ThaDdb(AWSBase):
 
         results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
-        _label = f"{progress_desc}: updating by pk" if progress_desc else "updating by pk"
+        _label = f"{progress_desc}: Updating by pk" if progress_desc else "Updating by pk"
+        if not commit:
+            _label += " (dry run)"
         if workers > 1:
 
             def _process(args: tuple[int, dict[str, Any]]) -> None:
@@ -537,7 +539,9 @@ class ThaDdb(AWSBase):
 
         results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
-        _label = f"{progress_desc}: deleting by pk" if progress_desc else "deleting by pk"
+        _label = f"{progress_desc}: Deleting by pk" if progress_desc else "Deleting by pk"
+        if not commit:
+            _label += " (dry run)"
         if workers > 1:
 
             def _process(args: tuple[int, dict[str, Any]]) -> None:
@@ -620,7 +624,7 @@ class ThaDdb(AWSBase):
             chunks = [batch[i : i + 25] for i in range(0, len(batch), 25)]
             unprocessed = {}
 
-            _label = f"{progress_desc}: writing items" if progress_desc else "writing items"
+            _label = f"{progress_desc}: Writing items" if progress_desc else "Writing items"
             for chunk in self._progress_iter(
                 chunks, total=len(chunks), desc=_label, show_progress=show_progress
             ):
