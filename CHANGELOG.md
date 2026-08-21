@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-21
+### Fixed
+- Re-locked transitive `cryptography` (pulled in via the `moto[dynamodb,ssm]` dev dependency) from `49.0.0` to `50.0.0`, resolving a known CVE (PYSEC-2026-3552) flagged by `pip-audit`. Dev-only — never shipped to real installs, since `cryptography` isn't a runtime dependency of this package.
+- Re-locked transitive `pip` (pulled in via `deptry` -> `pip-api`) from `26.1.2` to `26.2.1`, resolving a separate known CVE (PYSEC-2026-3721).
+
 ## [0.2.9] - 2026-07-18
 ### Fixed
 - tqdm progress labels are now capitalized (e.g. "Updating by pk" instead of "updating by pk") across `ThaDdb`, `ThaGsi`, and `ThaS3`.
