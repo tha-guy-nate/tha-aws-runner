@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-26
+### Added
+- `ThaGsi.batch_query` takes `filter_value_col`, `filter_value_placeholder`, and `filter_value_type` (default `"S"`) so a filter value can vary per row instead of being shared by the whole batch. With `rows`, each row's `filter_value_col` value is encoded via `filter_value_type` and bound to `filter_value_placeholder` in `filter_expr` (merged with any static `filter_values`). `filter_value_col` and `filter_value_placeholder` must be passed together; `filter_value_col` requires `rows` and `filter_expr`, and the placeholder must not also appear in `filter_values`. Rows dropped by `skip_statuses` are dropped from the per-row filter values too. A value that can't be encoded (e.g. `None` as `"S"`) is captured in `.errors` for that hash value like any other per-value failure.
+- Because `BatchQueryResult.results`/`.errors` are keyed by hash-key value alone, `batch_query` raises `ValueError` up front if the same hash value appears with two different filter values, rather than letting one silently overwrite the other. Identical repeats are fine. Re-keying results by `(hash_value, filter_value)` is left as a future decision.
+
 ## [0.2.10] - 2026-08-21
 ### Fixed
 - Re-locked transitive `cryptography` (pulled in via the `moto[dynamodb,ssm]` dev dependency) from `49.0.0` to `50.0.0`, resolving a known CVE (PYSEC-2026-3552) flagged by `pip-audit`. Dev-only — never shipped to real installs, since `cryptography` isn't a runtime dependency of this package.

@@ -678,6 +678,174 @@ def test_batch_query_show_progress(gsi: ThaGsi) -> None:
     assert result.errors == {}
 
 
+def _filter_rows() -> list[dict]:
+    return [
+        {"email": "a@x.com", "job": "j1", "row status": ""},
+        {"email": "b@x.com", "job": "j2", "row status": ""},
+        {"email": "c@x.com", "job": "j3", "row status": "error"},
+    ]
+
+
+def test_batch_query_filter_value_col_per_row(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    result = gsi.batch_query(
+        "users",
+        "email-index",
+        rows=_filter_rows(),
+        gsi_col="email",
+        filter_expr="#j = :job",
+        filter_names={"#j": "jobType"},
+        filter_values={":other": {"S": "static"}},
+        filter_value_col="job",
+        filter_value_placeholder=":job",
+        dynamodb=c,
+    )
+    assert set(result.results) == {"a@x.com", "b@x.com"}  # errored row skipped
+    sent = {
+        next(iter(call.kwargs["ExpressionAttributeValues"][":_pkv"].values())): call.kwargs[
+            "ExpressionAttributeValues"
+        ]
+        for call in c.query.call_args_list
+    }
+    assert sent["a@x.com"][":job"] == {"S": "j1"}
+    assert sent["b@x.com"][":job"] == {"S": "j2"}
+    assert sent["a@x.com"][":other"] == {"S": "static"}  # static values are merged, not replaced
+
+
+def test_batch_query_filter_value_type(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    gsi.batch_query(
+        "users",
+        "email-index",
+        rows=[{"email": "a@x.com", "n": 5, "row status": ""}],
+        gsi_col="email",
+        filter_expr="#n = :n",
+        filter_names={"#n": "count"},
+        filter_value_col="n",
+        filter_value_placeholder=":n",
+        filter_value_type="N",
+        dynamodb=c,
+    )
+    assert c.query.call_args.kwargs["ExpressionAttributeValues"][":n"] == {"N": "5"}
+
+
+def test_batch_query_filter_value_col_requires_placeholder(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="both filter_value_col and filter_value_placeholder"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            rows=_filter_rows(),
+            gsi_col="email",
+            filter_expr="#j = :job",
+            filter_value_col="job",
+            dynamodb=_client_fn(_TABLE_DESC),
+        )
+    with pytest.raises(ValueError, match="both filter_value_col and filter_value_placeholder"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            rows=_filter_rows(),
+            gsi_col="email",
+            filter_expr="#j = :job",
+            filter_value_placeholder=":job",
+            dynamodb=_client_fn(_TABLE_DESC),
+        )
+
+
+def test_batch_query_filter_value_col_requires_rows_and_filter_expr(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    with pytest.raises(ValueError, match="requires rows"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            ["a@x.com"],
+            filter_expr="#j = :job",
+            filter_value_col="job",
+            filter_value_placeholder=":job",
+            dynamodb=c,
+        )
+    with pytest.raises(ValueError, match="requires filter_expr"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            rows=_filter_rows(),
+            gsi_col="email",
+            filter_value_col="job",
+            filter_value_placeholder=":job",
+            dynamodb=c,
+        )
+
+
+def test_batch_query_filter_value_placeholder_clashes_with_static(gsi: ThaGsi) -> None:
+    with pytest.raises(ValueError, match="is in both filter_values and filter_value_col"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            rows=_filter_rows(),
+            gsi_col="email",
+            filter_expr="#j = :job",
+            filter_values={":job": {"S": "x"}},
+            filter_value_col="job",
+            filter_value_placeholder=":job",
+            dynamodb=_client_fn(_TABLE_DESC),
+        )
+
+
+def test_batch_query_filter_value_conflicting_rows_raise(gsi: ThaGsi) -> None:
+    rows = [
+        {"email": "a@x.com", "job": "j1", "row status": ""},
+        {"email": "a@x.com", "job": "j2", "row status": ""},
+    ]
+    with pytest.raises(ValueError, match="different 'job' values"):
+        gsi.batch_query(
+            "users",
+            "email-index",
+            rows=rows,
+            gsi_col="email",
+            filter_expr="#j = :job",
+            filter_value_col="job",
+            filter_value_placeholder=":job",
+            dynamodb=_client_fn(_TABLE_DESC),
+        )
+
+
+def test_batch_query_filter_value_duplicate_identical_rows_ok(gsi: ThaGsi) -> None:
+    rows = [
+        {"email": "a@x.com", "job": "j1", "row status": ""},
+        {"email": "a@x.com", "job": "j1", "row status": ""},
+    ]
+    result = gsi.batch_query(
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        filter_expr="#j = :job",
+        filter_value_col="job",
+        filter_value_placeholder=":job",
+        dynamodb=_client_fn(_TABLE_DESC),
+    )
+    assert set(result.results) == {"a@x.com"}
+
+
+def test_batch_query_filter_value_bad_row_value_is_per_value_error(gsi: ThaGsi) -> None:
+    rows = [
+        {"email": "a@x.com", "job": None, "row status": ""},
+        {"email": "b@x.com", "job": "j2", "row status": ""},
+    ]
+    result = gsi.batch_query(
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        filter_expr="#j = :job",
+        filter_value_col="job",
+        filter_value_placeholder=":job",
+        dynamodb=_client_fn(_TABLE_DESC),
+    )
+    assert set(result.results) == {"b@x.com"}
+    assert isinstance(result.errors["a@x.com"], ValueError)
+
+
 def test_batch_count_with_rows(gsi: ThaGsi) -> None:
     c = _count_client_fn(_TABLE_DESC)
     rows = [{"status": "ab", "extra": 1}, {"status": "abc", "extra": 2}]
