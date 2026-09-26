@@ -91,6 +91,12 @@ class AWSClients:
         return self.session.client("kinesis")
 
 
+def _compose_label(prefix: str | None, label: str | None, default: str) -> str:
+    """Build a progress label: ``"<prefix>: <text>"`` where text is ``label`` or ``default``."""
+    text = label if label is not None else default
+    return f"{prefix}: {text}" if prefix else text
+
+
 class AWSBase:
     def __init__(
         self,
