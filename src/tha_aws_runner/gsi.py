@@ -544,6 +544,16 @@ class ThaGsi(AWSBase):
             return values
         raise ValueError("Provide either values or rows")
 
+    @staticmethod
+    def _resolve_batch_filter_values(
+        rows: list[dict[str, Any]],
+        filter_value_col: str,
+        skip_statuses: list[str],
+        status_col: str,
+    ) -> list[Any]:
+        # Same row filter as _resolve_batch_values, so the result lines up with it index-for-index.
+        return [row[filter_value_col] for row in rows if row.get(status_col) not in skip_statuses]
+
     def batch_query(
         self,
         table_name: str,
@@ -561,6 +571,9 @@ class ThaGsi(AWSBase):
         filter_expr: str | None = None,
         filter_names: dict[str, str] | None = None,
         filter_values: dict[str, dict[str, Any]] | None = None,
+        filter_value_col: str | None = None,
+        filter_value_placeholder: str | None = None,
+        filter_value_type: str = "S",
         dynamodb: Any = None,
         max_workers: int | None = None,
         show_progress: bool = False,
@@ -568,10 +581,37 @@ class ThaGsi(AWSBase):
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
     ) -> BatchQueryResult:
+        if bool(filter_value_col) != bool(filter_value_placeholder):
+            raise ValueError("pass both filter_value_col and filter_value_placeholder, or neither")
+        if filter_value_col:
+            if rows is None:
+                raise ValueError("filter_value_col requires rows")
+            if filter_expr is None:
+                raise ValueError("filter_value_col requires filter_expr")
+            if filter_values and filter_value_placeholder in filter_values:
+                raise ValueError(
+                    f"{filter_value_placeholder!r} is in both filter_values and filter_value_col"
+                )
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         resolved_values = self._resolve_batch_values(
             values, rows, gsi_col, effective_skip, status_col
         )
+        row_filter_values: list[Any] = [None] * len(resolved_values)
+        if filter_value_col:
+            assert rows is not None
+            row_filter_values = self._resolve_batch_filter_values(
+                rows, filter_value_col, effective_skip, status_col
+            )
+            # Results are keyed by the hash-key value alone, so one hash value paired with two
+            # different filter values would silently overwrite itself.
+            seen: dict[Any, Any] = {}
+            for hv, fv in zip(resolved_values, row_filter_values, strict=True):
+                if hv in seen and seen[hv] != fv:
+                    raise ValueError(
+                        f"hash value {hv!r} appears with different {filter_value_col!r} values "
+                        f"({seen[hv]!r} and {fv!r}); results are keyed by hash value alone"
+                    )
+                seen[hv] = fv
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
@@ -584,8 +624,14 @@ class ThaGsi(AWSBase):
             gsi_range_type=gsi_range_type,
         )
 
-        def _run(v: Any) -> tuple[Any, list[dict[str, Any]]]:
+        def _run(v: Any, fv: Any) -> tuple[Any, list[dict[str, Any]]]:
             client = self._client(dynamodb)
+            run_filter_values = filter_values
+            if filter_value_placeholder:
+                run_filter_values = {
+                    **(filter_values or {}),
+                    filter_value_placeholder: _to_ddb_attr(fv, filter_value_type),
+                }
             kwargs = self._build_query_kwargs(
                 table_name,
                 index_name,
@@ -598,7 +644,7 @@ class ThaGsi(AWSBase):
                 sort_key_op=sort_key_op,
                 filter_expr=filter_expr,
                 filter_names=filter_names,
-                filter_values=filter_values,
+                filter_values=run_filter_values,
             )
             return v, self._run_query(kwargs, client)
 
@@ -607,7 +653,10 @@ class ThaGsi(AWSBase):
 
         _label = f"{progress_desc}: Querying GSI" if progress_desc else "Querying GSI"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_run, v): v for v in resolved_values}
+            futures = {
+                executor.submit(_run, v, fv): v
+                for v, fv in zip(resolved_values, row_filter_values, strict=True)
+            }
             for future in self._progress_iter(
                 as_completed(futures),
                 total=len(futures),
