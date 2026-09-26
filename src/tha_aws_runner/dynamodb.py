@@ -5,7 +5,7 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
-from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.aws_base import AWSBase, _compose_label
 from tha_aws_runner.errors import AwsError
 from tha_aws_runner.utils import _THROTTLE_CODES, _to_ddb_attr, parse_arn
 
@@ -136,6 +136,7 @@ class ThaDdb(AWSBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
@@ -268,7 +269,7 @@ class ThaDdb(AWSBase):
                 records_dict.setdefault(tbl, {}).update(tbl_records)
             found_ids.update(local_found)
 
-        _label = f"{progress_desc}: Fetching by pk" if progress_desc else "Fetching by pk"
+        _label = _compose_label(progress_desc, label, "Fetching by pk")
         if workers > 1:
 
             def _threaded(
@@ -432,6 +433,7 @@ class ThaDdb(AWSBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
@@ -448,7 +450,7 @@ class ThaDdb(AWSBase):
 
         results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
-        _label = f"{progress_desc}: Updating by pk" if progress_desc else "Updating by pk"
+        _label = _compose_label(progress_desc, label, "Updating by pk")
         if not commit:
             _label += " (dry run)"
         if workers > 1:
@@ -523,6 +525,7 @@ class ThaDdb(AWSBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
         skip_statuses: list[str] | None = None,
@@ -539,7 +542,7 @@ class ThaDdb(AWSBase):
 
         results: list[dict[str, Any]] = [None] * len(rows)  # type: ignore[list-item]
 
-        _label = f"{progress_desc}: Deleting by pk" if progress_desc else "Deleting by pk"
+        _label = _compose_label(progress_desc, label, "Deleting by pk")
         if not commit:
             _label += " (dry run)"
         if workers > 1:
@@ -599,6 +602,7 @@ class ThaDdb(AWSBase):
         *,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         commit: bool = False,
         dynamodb: Any = None,
     ) -> dict[str, Any]:
@@ -624,7 +628,7 @@ class ThaDdb(AWSBase):
             chunks = [batch[i : i + 25] for i in range(0, len(batch), 25)]
             unprocessed = {}
 
-            _label = f"{progress_desc}: Writing items" if progress_desc else "Writing items"
+            _label = _compose_label(progress_desc, label, "Writing items")
             for chunk in self._progress_iter(
                 chunks, total=len(chunks), desc=_label, show_progress=show_progress
             ):

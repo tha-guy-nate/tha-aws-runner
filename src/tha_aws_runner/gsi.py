@@ -7,7 +7,7 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
-from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.aws_base import AWSBase, _compose_label
 from tha_aws_runner.utils import _THROTTLE_CODES, _to_ddb_attr, parse_arn
 
 _VALID_SK_OPS = frozenset({"=", "<", "<=", ">", ">=", "begins_with", "between"})
@@ -578,6 +578,7 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
     ) -> BatchQueryResult:
@@ -651,7 +652,7 @@ class ThaGsi(AWSBase):
         results: dict[Any, list[dict[str, Any]]] = {}
         errors: dict[Any, Exception] = {}
 
-        _label = f"{progress_desc}: Querying GSI" if progress_desc else "Querying GSI"
+        _label = _compose_label(progress_desc, label, "Querying GSI")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(_run, v, fv): v
@@ -695,6 +696,7 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
     ) -> BatchCountResult:
@@ -735,7 +737,7 @@ class ThaGsi(AWSBase):
         results: dict[Any, int] = {}
         errors: dict[Any, Exception] = {}
 
-        _label = f"{progress_desc}: Counting GSI" if progress_desc else "Counting GSI"
+        _label = _compose_label(progress_desc, label, "Counting GSI")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_run, v): v for v in resolved_values}
             for future in self._progress_iter(
@@ -786,6 +788,7 @@ class ThaGsi(AWSBase):
         max_workers: int | None = None,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
     ) -> BatchUpdateResult:
@@ -917,7 +920,7 @@ class ThaGsi(AWSBase):
         upd_results: dict[Any, list[dict[str, Any]]] = {}
         errors: dict[Any, Exception] = {}
 
-        _label = f"{progress_desc}: Updating by GSI" if progress_desc else "Updating by GSI"
+        _label = _compose_label(progress_desc, label, "Updating by GSI")
         if not commit:
             _label += " (dry run)"
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

@@ -8,7 +8,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 from tqdm import tqdm
 
-from tha_aws_runner.aws_base import AWSBase
+from tha_aws_runner.aws_base import AWSBase, _compose_label
 from tha_aws_runner.utils import parse_arn
 
 
@@ -305,6 +305,7 @@ class ThaS3(AWSBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         s3: Any = None,
     ) -> list[dict[str, Any]]:
         bucket = self._resolve_bucket(bucket)
@@ -319,6 +320,7 @@ class ThaS3(AWSBase):
             workers=workers,
             show_progress=show_progress,
             progress_desc=progress_desc,
+            label=label,
             s3=s3,
         )
 
@@ -336,6 +338,7 @@ class ThaS3(AWSBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         s3: Any = None,
     ) -> list[dict[str, Any]]:
         if uri_col is not None and key_col is not None:
@@ -390,7 +393,7 @@ class ThaS3(AWSBase):
             except Exception as exc:
                 results[idx] = {"bucket": b, "key": k, "status": "error", "message": str(exc)}
 
-        _label = f"{progress_desc}: Downloading files" if progress_desc else "Downloading files"
+        _label = _compose_label(progress_desc, label, "Downloading files")
         if workers > 1:
 
             def _threaded(args: tuple[int, dict[str, Any]]) -> None:

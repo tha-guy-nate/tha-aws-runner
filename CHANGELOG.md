@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+### Added
+- Every method with a progress bar takes a keyword-only `label` (default `None`): `batch_fetch_by_pk`, `batch_update_by_pk`, `batch_delete_by_pk`, `batch_write`, `batch_query`, `batch_count`, `batch_update_by_gsi`, `batch_download`, `download_prefix`. `progress_desc` keeps its meaning as the step prefix and is asserted at the front (`"[4/7]: <text>"`); `label` replaces the default text after it (`"Querying GSI"`, `"Fetching by pk"`, ...). E.g. `progress_desc="[4/7]", label="Looking up orders"` renders `[4/7]: Looking up orders`. The `" (dry run)"` marker on update/delete labels is still appended. No behavior change when `label` is omitted.
+
+### Changed
+- `__version__` is now read from the installed package metadata (`importlib.metadata`) instead of a hardcoded string, so `pyproject.toml` is the only place the version is bumped.
+
 ## [0.3.0] - 2026-09-26
 ### Added
 - `ThaGsi.batch_query` takes `filter_value_col`, `filter_value_placeholder`, and `filter_value_type` (default `"S"`) so a filter value can vary per row instead of being shared by the whole batch. With `rows`, each row's `filter_value_col` value is encoded via `filter_value_type` and bound to `filter_value_placeholder` in `filter_expr` (merged with any static `filter_values`). `filter_value_col` and `filter_value_placeholder` must be passed together; `filter_value_col` requires `rows` and `filter_expr`, and the placeholder must not also appear in `filter_values`. Rows dropped by `skip_statuses` are dropped from the per-row filter values too. A value that can't be encoded (e.g. `None` as `"S"`) is captured in `.errors` for that hash value like any other per-value failure.
