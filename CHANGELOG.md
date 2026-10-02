@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+### Changed
+- Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `boto3==1.43.107`, `botocore==1.43.107`, `tqdm==4.70.1`. Dev dependencies are pinned the same way (`pytest==9.1.1`, `ruff==0.16.10`, `mypy==2.4.0`, `deptry==0.25.1`, `pip-audit==2.10.1`, `pytest-cov==7.1.0`, `moto[dynamodb,ssm,sts]==5.2.3`).
+
 ## [0.4.0] - 2026-09-26
 ### Added
 - Every method with a progress bar takes a keyword-only `label` (default `None`): `batch_fetch_by_pk`, `batch_update_by_pk`, `batch_delete_by_pk`, `batch_write`, `batch_query`, `batch_count`, `batch_update_by_gsi`, `batch_download`, `download_prefix`. `progress_desc` keeps its meaning as the step prefix and is asserted at the front (`"[4/7]: <text>"`); `label` replaces the default text after it (`"Querying GSI"`, `"Fetching by pk"`, ...). E.g. `progress_desc="[4/7]", label="Looking up orders"` renders `[4/7]: Looking up orders`. The `" (dry run)"` marker on update/delete labels is still appended. No behavior change when `label` is omitted.
