@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - 2026-10-02
 ### Changed
-- Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `boto3==1.43.107`, `botocore==1.43.107`, `tqdm==4.70.1`. Dev dependencies are pinned the same way (`pytest==9.1.1`, `ruff==0.16.10`, `mypy==2.4.0`, `deptry==0.25.1`, `pip-audit==2.10.1`, `pytest-cov==7.1.0`, `moto[dynamodb,ssm,sts]==5.2.3`).
+- Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `boto3==1.43.107`, `botocore==1.43.107`, `tqdm==4.70.1`.
 
 ## [0.4.0] - 2026-09-26
 ### Added

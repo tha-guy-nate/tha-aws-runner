@@ -1609,13 +1609,13 @@ dev = [
 requires-dist = [
     { name = "boto3", specifier = "==1.43.107" },
     { name = "botocore", specifier = "==1.43.107" },
-    { name = "deptry", marker = "extra == 'dev'", specifier = "==0.25.1" },
-    { name = "moto", extras = ["dynamodb", "ssm", "sts"], marker = "extra == 'dev'", specifier = "==5.2.3" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.4.0" },
-    { name = "pip-audit", marker = "extra == 'dev'", specifier = "==2.10.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.1.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.10" },
+    { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
+    { name = "moto", extras = ["dynamodb", "ssm", "sts"], marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
+    { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "tqdm", specifier = "==4.70.1" },
 ]
 provides-extras = ["dev"]
