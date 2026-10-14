@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-13
+### Fixed
+- `ThaGsi.batch_query` and `ThaGsi.batch_count` now issue one DynamoDB query per distinct hash value instead of one per input row/value. Previously rows sharing a `gsi_col` value each ran an identical query whose results overwrote each other. `.results` / `.errors` keys and contents are unchanged, the progress bar total is now the number of distinct hash values, and `batch_query` still raises `ValueError` when one hash value is paired with different `filter_value_col` values.
+
 ## [0.5.0] - 2026-10-02
 ### Changed
 - Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `boto3==1.43.107`, `botocore==1.43.107`, `tqdm==4.70.1`.

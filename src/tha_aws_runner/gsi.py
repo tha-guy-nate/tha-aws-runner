@@ -613,6 +613,10 @@ class ThaGsi(AWSBase):
                         f"({seen[hv]!r} and {fv!r}); results are keyed by hash value alone"
                     )
                 seen[hv] = fv
+        # One query per distinct hash value; the check above guarantees duplicates share a
+        # filter value.
+        pairs = dict(zip(resolved_values, row_filter_values, strict=True))
+        resolved_values, row_filter_values = list(pairs), list(pairs.values())
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(
@@ -704,6 +708,8 @@ class ThaGsi(AWSBase):
         resolved_values = self._resolve_batch_values(
             values, rows, gsi_col, effective_skip, status_col
         )
+        # One query per distinct hash value.
+        resolved_values = list(dict.fromkeys(resolved_values))
         table_name = self._resolve_table(table_name)
         init_client = self._client(dynamodb)
         pk_name, pk_type, sk_name, sk_type = self._resolve_gsi_keys(

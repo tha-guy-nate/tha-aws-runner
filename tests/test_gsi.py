@@ -827,6 +827,55 @@ def test_batch_query_filter_value_duplicate_identical_rows_ok(gsi: ThaGsi) -> No
     assert set(result.results) == {"a@x.com"}
 
 
+def test_batch_query_duplicate_hash_values_query_once(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    rows = [{"email": "a@x.com", "row status": ""} for _ in range(50)]
+    rows.append({"email": "b@x.com", "row status": ""})
+    with patch.object(gsi, "_progress_iter", wraps=gsi._progress_iter) as progress:
+        result = gsi.batch_query("users", "email-index", rows=rows, gsi_col="email", dynamodb=c)
+    assert c.query.call_count == 2
+    assert progress.call_args.kwargs["total"] == 2
+    assert set(result.results) == {"a@x.com", "b@x.com"}
+    assert result.results["a@x.com"] == [{"email": "a@x.com", "user_id": "u-a@x.com"}]
+    assert result.errors == {}
+
+
+def test_batch_query_duplicate_values_list_query_once(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    result = gsi.batch_query("users", "email-index", ["a@x.com", "a@x.com", "a@x.com"], dynamodb=c)
+    assert c.query.call_count == 1
+    assert set(result.results) == {"a@x.com"}
+
+
+def test_batch_query_filter_value_duplicate_rows_query_once(gsi: ThaGsi) -> None:
+    c = _client_fn(_TABLE_DESC)
+    rows = [{"email": "a@x.com", "job": "j1", "row status": ""} for _ in range(10)]
+    result = gsi.batch_query(
+        "users",
+        "email-index",
+        rows=rows,
+        gsi_col="email",
+        filter_expr="#j = :job",
+        filter_names={"#j": "job"},
+        filter_value_col="job",
+        filter_value_placeholder=":job",
+        dynamodb=c,
+    )
+    assert c.query.call_count == 1
+    assert c.query.call_args.kwargs["ExpressionAttributeValues"][":job"] == {"S": "j1"}
+    assert set(result.results) == {"a@x.com"}
+
+
+def test_batch_query_duplicate_hash_value_error_captured_once(gsi: ThaGsi) -> None:
+    c = _client_fn_with_error(_TABLE_DESC, "bad@x.com")
+    result = gsi.batch_query(
+        "users", "email-index", ["bad@x.com", "ok@x.com", "bad@x.com"], dynamodb=c
+    )
+    assert c.query.call_count == 2
+    assert set(result.results) == {"ok@x.com"}
+    assert set(result.errors) == {"bad@x.com"}
+
+
 def test_batch_query_filter_value_bad_row_value_is_per_value_error(gsi: ThaGsi) -> None:
     rows = [
         {"email": "a@x.com", "job": None, "row status": ""},
@@ -878,6 +927,18 @@ def test_batch_count_neither_values_nor_rows_raises(gsi: ThaGsi) -> None:
     c = _count_client_fn(_TABLE_DESC)
     with pytest.raises(ValueError, match="Provide either values or rows"):
         gsi.batch_count("users", "email-index", dynamodb=c)
+
+
+def test_batch_count_duplicate_hash_values_count_once(gsi: ThaGsi) -> None:
+    c = _count_client_fn(_TABLE_DESC)
+    rows = [{"email": "ab", "row status": ""} for _ in range(50)]
+    rows.append({"email": "abc", "row status": ""})
+    with patch.object(gsi, "_progress_iter", wraps=gsi._progress_iter) as progress:
+        result = gsi.batch_count("users", "email-index", rows=rows, gsi_col="email", dynamodb=c)
+    assert c.query.call_count == 2
+    assert progress.call_args.kwargs["total"] == 2
+    assert result.results == {"ab": 2, "abc": 3}
+    assert result.errors == {}
 
 
 def test_batch_count_show_progress(gsi: ThaGsi) -> None:
