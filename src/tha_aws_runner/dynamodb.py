@@ -320,6 +320,7 @@ class ThaDdb(AWSBase):
         update_value: Any,
         *,
         increment_attr: str | None = None,
+        require_exists: bool = False,
         commit: bool = False,
         dynamodb: Any = None,
         _set_rows: bool = True,
@@ -341,12 +342,16 @@ class ThaDdb(AWSBase):
         expr_attr_names: dict[str, str] = {"#U": update_attr}
         if increment_attr:
             expr_attr_names["#INC"] = increment_attr
+        if require_exists:
+            expr_attr_names["#K"] = key_name
 
         update_expr = "SET #U = :uval"
         if increment_attr:
             update_expr += ", #INC = if_not_exists(#INC, :zero) + :one"
 
         condition_expr = "attribute_not_exists(#U) OR #U <> :uval"
+        if require_exists:
+            condition_expr = f"attribute_exists(#K) AND ({condition_expr})"
 
         eavs: dict[str, Any] = {":uval": ddb_update_value}
         if increment_attr:
@@ -354,6 +359,11 @@ class ThaDdb(AWSBase):
             eavs[":one"] = {"N": "1"}
 
         key = {key_name: {key_type: partition_key}}
+
+        # ALL_OLD on a failed check tells "item missing" (no Item) from "value unchanged"
+        extra_kwargs: dict[str, Any] = {}
+        if require_exists:
+            extra_kwargs["ReturnValuesOnConditionCheckFailure"] = "ALL_OLD"
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -365,6 +375,7 @@ class ThaDdb(AWSBase):
                     ExpressionAttributeValues=eavs,
                     ConditionExpression=condition_expr,
                     ReturnValues="ALL_OLD",
+                    **extra_kwargs,
                 )
                 result = {"pk": partition_key, "status": "updated", "old": resp.get("Attributes")}
                 if _set_rows:
@@ -376,6 +387,17 @@ class ThaDdb(AWSBase):
                 msg = e.response.get("Error", {}).get("Message")
 
                 if code == "ConditionalCheckFailedException":
+                    if require_exists and not e.response.get("Item"):
+                        result = {
+                            "pk": partition_key,
+                            "status": "error",
+                            "message": (
+                                f"No item found for {key_name} {partition_key}; not created."
+                            ),
+                        }
+                        if _set_rows:
+                            self.rows = result
+                        return result
                     result = {
                         "pk": partition_key,
                         "status": "skipped",
@@ -430,6 +452,7 @@ class ThaDdb(AWSBase):
         table_name: str | None = None,
         table_name_col: str | None = None,
         increment_attr: str | None = None,
+        require_exists: bool = False,
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
@@ -471,6 +494,7 @@ class ThaDdb(AWSBase):
                     update_type,
                     val,
                     increment_attr=increment_attr,
+                    require_exists=require_exists,
                     commit=commit,
                     dynamodb=client,
                     _set_rows=False,
@@ -505,6 +529,7 @@ class ThaDdb(AWSBase):
                     update_type,
                     val,
                     increment_attr=increment_attr,
+                    require_exists=require_exists,
                     commit=commit,
                     dynamodb=dynamodb,
                     _set_rows=False,

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+### Added
+- `ThaDdb.update_by_pk` and `ThaDdb.batch_update_by_pk` take a keyword-only `require_exists` (default `False`). With `require_exists=True` the update is conditioned on `attribute_exists(<key_name>)`, so a PK with no item is no longer created as a partial item: nothing is written and the result is `{"pk": ..., "status": "error", "message": "No item found for <key_name> <pk>; not created."}`. An existing item with a new value is still `updated` (with `old`), and an unchanged value is still `skipped`. The default keeps today's upsert behavior.
+
+### Changed
+- Bumped `boto3` and `botocore` to `==1.43.108`.
+
 ## [0.5.1] - 2026-10-13
 ### Fixed
 - `ThaGsi.batch_query` and `ThaGsi.batch_count` now issue one DynamoDB query per distinct hash value instead of one per input row/value. Previously rows sharing a `gsi_col` value each ran an identical query whose results overwrote each other. `.results` / `.errors` keys and contents are unchanged, the progress bar total is now the number of distinct hash values, and `batch_query` still raises `ValueError` when one hash value is paired with different `filter_value_col` values.
