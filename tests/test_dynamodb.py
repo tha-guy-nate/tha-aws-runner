@@ -452,6 +452,85 @@ def test_update_by_pk_dry_run_still_validates_type(mock_ddb_client):
         ddb.update_by_pk("t", "pk", "id", "S", "flag", "BOOL", "maybe")
 
 
+def _conditional_check_failed(item: dict | None = None) -> ClientError:
+    response: dict = {"Error": {"Code": "ConditionalCheckFailedException", "Message": "failed"}}
+    if item is not None:
+        response["Item"] = item
+    return ClientError(response, "UpdateItem")
+
+
+def test_update_by_pk_default_does_not_require_exists(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk("my_table", "pk1", "id", "S", "status", "S", "active", commit=True)
+    assert result == {"pk": "pk1", "status": "updated", "old": None}
+    call_kwargs = mock_ddb_client.update_item.call_args.kwargs
+    assert call_kwargs["ConditionExpression"] == "attribute_not_exists(#U) OR #U <> :uval"
+    assert "#K" not in call_kwargs["ExpressionAttributeNames"]
+    assert "ReturnValuesOnConditionCheckFailure" not in call_kwargs
+
+
+def test_update_by_pk_require_exists_condition_expression(mock_ddb_client):
+    mock_ddb_client.update_item.return_value = {"Attributes": {"id": {"S": "pk1"}}}
+    ddb = make_ddb(mock_ddb_client)
+    ddb.update_by_pk(
+        "my_table", "pk1", "id", "S", "status", "S", "active", require_exists=True, commit=True
+    )
+    call_kwargs = mock_ddb_client.update_item.call_args.kwargs
+    assert call_kwargs["ConditionExpression"] == (
+        "attribute_exists(#K) AND (attribute_not_exists(#U) OR #U <> :uval)"
+    )
+    assert call_kwargs["ExpressionAttributeNames"] == {"#U": "status", "#K": "id"}
+    assert call_kwargs["ReturnValuesOnConditionCheckFailure"] == "ALL_OLD"
+
+
+def test_update_by_pk_require_exists_changed_value(mock_ddb_client):
+    old = {"id": {"S": "pk1"}, "status": {"S": "inactive"}}
+    mock_ddb_client.update_item.return_value = {"Attributes": old}
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        "my_table", "pk1", "id", "S", "status", "S", "active", require_exists=True, commit=True
+    )
+    assert result == {"pk": "pk1", "status": "updated", "old": old}
+
+
+def test_update_by_pk_require_exists_unchanged_value(mock_ddb_client):
+    mock_ddb_client.update_item.side_effect = _conditional_check_failed(
+        {"id": {"S": "pk1"}, "status": {"S": "active"}}
+    )
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        "my_table", "pk1", "id", "S", "status", "S", "active", require_exists=True, commit=True
+    )
+    assert result["status"] == "skipped"
+    assert result["old"] is None
+    assert "not different" in result["message"]
+
+
+def test_update_by_pk_require_exists_missing_item(mock_ddb_client):
+    mock_ddb_client.update_item.side_effect = _conditional_check_failed()
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        "my_table", "pk9", "id", "S", "status", "S", "active", require_exists=True, commit=True
+    )
+    assert result == {
+        "pk": "pk9",
+        "status": "error",
+        "message": "No item found for id pk9; not created.",
+    }
+    assert ddb.rows is result
+    assert mock_ddb_client.update_item.call_count == 1
+
+
+def test_update_by_pk_require_exists_dry_run(mock_ddb_client):
+    ddb = make_ddb(mock_ddb_client)
+    result = ddb.update_by_pk(
+        "my_table", "pk1", "id", "S", "status", "S", "active", require_exists=True
+    )
+    assert result == {"pk": "pk1", "status": "dry_run"}
+    mock_ddb_client.update_item.assert_not_called()
+
+
 # --- batch_update_by_pk ---
 
 
@@ -514,6 +593,43 @@ def test_batch_update_by_pk_threaded(mock_ddb_client):
     assert all(r["status"] == "updated" for r in result)
     assert mock_ddb_client.update_item.call_count == 6
     assert ddb.rows is result
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_batch_update_by_pk_require_exists(mock_ddb_client, workers):
+    def _update_item(**kwargs):
+        if kwargs["Key"]["id"]["S"] == "missing":
+            raise _conditional_check_failed()
+        return {"Attributes": {"id": kwargs["Key"]["id"]}}
+
+    mock_ddb_client.update_item.side_effect = _update_item
+    ddb = make_ddb(mock_ddb_client)
+    rows = [
+        {"user_id": "pk1", "status_col": "active"},
+        {"user_id": "missing", "status_col": "active"},
+    ]
+    result = ddb.batch_update_by_pk(
+        rows,
+        "user_id",
+        "id",
+        "S",
+        "status",
+        "S",
+        "status_col",
+        table_name="my_table",
+        require_exists=True,
+        workers=workers,
+        commit=True,
+        dynamodb=mock_ddb_client,
+    )
+    assert result[0]["status"] == "updated"
+    assert result[1] == {
+        "pk": "missing",
+        "status": "error",
+        "message": "No item found for id missing; not created.",
+    }
+    for call in mock_ddb_client.update_item.call_args_list:
+        assert call.kwargs["ConditionExpression"].startswith("attribute_exists(#K) AND ")
 
 
 def test_batch_update_by_pk_table_name_col(mock_ddb_client):

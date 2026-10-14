@@ -2009,7 +2009,7 @@ def _stub_client(query_pages: list) -> MagicMock:
 def test_query_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
     c = _stub_client([{"Items": [{"districtId": {"S": "d1"}, "name": {"S": "D1"}}]}])
     result = gsi.query(
-        "edfi-connections_prod",
+        "connections_prod",
         "districtId-index",
         "d1",
         gsi_hash_key="districtId",
@@ -2045,7 +2045,7 @@ def test_count_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
     mock.describe_table.side_effect = AssertionError("describe_table must not be called")
     mock.query.return_value = {"Count": 5}
     result = gsi.count(
-        "edfi-connections_prod",
+        "connections_prod",
         "districtId-index",
         "d1",
         gsi_hash_key="districtId",
@@ -2066,7 +2066,7 @@ def test_batch_query_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
 
     mock.query.side_effect = _query
     result = gsi.batch_query(
-        "edfi-connections_prod",
+        "connections_prod",
         "districtId-index",
         ["d1", "d2"],
         gsi_hash_key="districtId",
@@ -2082,7 +2082,7 @@ def test_batch_count_with_gsi_keys_skips_describe(gsi: ThaGsi) -> None:
     mock.describe_table.side_effect = AssertionError("describe_table must not be called")
     mock.query.return_value = {"Count": 3}
     result = gsi.batch_count(
-        "edfi-connections_prod",
+        "connections_prod",
         "districtId-index",
         ["d1"],
         gsi_hash_key="districtId",
